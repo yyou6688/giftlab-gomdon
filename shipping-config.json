@@ -1,0 +1,48 @@
+{
+  "defaultWeightGram": 500,
+  "weightTiers": [
+    {
+      "maxWeightGram": 500,
+      "fee": 20000
+    },
+    {
+      "maxWeightGram": 1000,
+      "fee": 30000
+    },
+    {
+      "maxWeightGram": 2000,
+      "fee": 45000
+    }
+  ],
+  "extraFeePerKgAboveMax": 15000,
+  "freeshipRules": [
+    {
+      "label": "Freeship cho sản phẩm Bút dao unboxing (handmade) từ 100.000đ",
+      "active": false,
+      "targets": [
+        {
+          "category": "butdao",
+          "minOrderValue": 100000
+        }
+      ]
+    },
+    {
+      "label": "Freeship toàn đơn hàng từ 500.000đ",
+      "active": false,
+      "targets": [
+        {
+          "category": "all",
+          "minOrderValue": 500000
+        }
+      ]
+    }
+  ],
+  "giftWrap": {
+    "active": true,
+    "label": "Gói quà tặng (giấy kraft tổ ong + ruy băng)",
+    "priceFor1": 3000,
+    "priceFor2": 5000,
+    "freeFromQty": 3
+  },
+  "addOns": []
+}
