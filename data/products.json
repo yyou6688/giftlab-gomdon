@@ -1,0 +1,147 @@
+[
+  {
+    "id": "15776493373",
+    "name": "Bút unboxing công chúa dễ thương dọc giấy cắt washi/sticker | handmade",
+    "category": "butdao",
+    "image": "https://cf.shopee.vn/file/ea81342636d351b3d651899ef1d15e53",
+    "variants": [
+      {
+        "name": "1,Tặng kèm 2 lưỡi dao",
+        "price": 259000,
+        "stock": 0
+      },
+      {
+        "name": "2,Tặng kèm 2 lưỡi dao",
+        "price": 259000,
+        "stock": 0
+      }
+    ],
+    "priceMin": 259000,
+    "priceMax": 259000,
+    "totalStock": 0
+  },
+  {
+    "id": "23173820205",
+    "name": "Gacha Blindbox hộp nhân phẩm",
+    "category": "blindbox",
+    "image": "https://cf.shopee.vn/file/sg-11134201-7qves-lj9q37uhfbyh34",
+    "variants": [
+      {
+        "name": "1c nv random,Nguyên seal",
+        "price": 330000,
+        "stock": 0
+      }
+    ],
+    "priceMin": 330000,
+    "priceMax": 330000,
+    "totalStock": 0
+  },
+  {
+    "id": "28951748203",
+    "name": "Ngòi bút thay thế bút bi handmade charm popbean",
+    "category": "butdao",
+    "image": "https://cf.shopee.vn/file/vn-11134207-7r98o-lw4783s347h721",
+    "variants": [
+      {
+        "name": "Ngòi bút hạt,Mực đen",
+        "price": 9500,
+        "stock": 495
+      },
+      {
+        "name": "Ngòi bút gel,Mực đen",
+        "price": 9500,
+        "stock": 495
+      }
+    ],
+    "priceMin": 9500,
+    "priceMax": 9500,
+    "totalStock": 990
+  },
+  {
+    "id": "12288180376",
+    "name": "Dao unboxing tiểu thư dễ thương dọc giấy cắt washi/sticker charm KUROMI | handmade",
+    "category": "butdao",
+    "image": "https://cf.shopee.vn/file/b379bb1f49b956db84c6416bca7ad21b",
+    "variants": [
+      {
+        "name": "3,Tặng 2 lưỡi dao",
+        "price": 165000,
+        "stock": 10
+      },
+      {
+        "name": "4,Tặng 2 lưỡi dao",
+        "price": 165000,
+        "stock": 3
+      },
+      {
+        "name": "5,Tặng 2 lưỡi dao",
+        "price": 165000,
+        "stock": 7
+      },
+      {
+        "name": "1,Tặng 2 lưỡi dao",
+        "price": 165000,
+        "stock": 0
+      },
+      {
+        "name": "2,Tặng 2 lưỡi dao",
+        "price": 165000,
+        "stock": 0
+      }
+    ],
+    "priceMin": 165000,
+    "priceMax": 165000,
+    "totalStock": 20
+  },
+  {
+    "id": "20866673297",
+    "name": "Bút dao sanrio halloween có bán lẻ mô hình",
+    "category": "butdao",
+    "image": "https://cf.shopee.vn/file/sg-11134201-22120-b9ih8lr3vnkv5f",
+    "variants": [
+      {
+        "name": "My Melody thiên thần,Mô hình",
+        "price": 79000,
+        "stock": 10
+      },
+      {
+        "name": "Ngẫu nhiên 1 trong 3,Bút dao",
+        "price": 99000,
+        "stock": 10
+      },
+      {
+        "name": "Ngẫu nhiên 1 trong 3,Mô hình",
+        "price": 79000,
+        "stock": 10
+      },
+      {
+        "name": "Pochacco,Bút dao",
+        "price": 109000,
+        "stock": 8
+      },
+      {
+        "name": "Pochacco,Mô hình",
+        "price": 79000,
+        "stock": 10
+      },
+      {
+        "name": "Kuromi ác gủy,Bút dao",
+        "price": 109000,
+        "stock": 6
+      },
+      {
+        "name": "Kuromi ác gủy,Mô hình",
+        "price": 79000,
+        "stock": 4
+      },
+      {
+        "name": "My Melody thiên thần,Bút dao",
+        "price": 109000,
+        "stock": 9
+      }
+    ],
+    "priceMin": 79000,
+    "priceMax": 109000,
+    "totalStock": 67
+  }
+]
