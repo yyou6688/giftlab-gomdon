@@ -6,9 +6,6 @@ let products = [];
 let shippingConfig = null;
 let homepageContent = null; // MỚI: banner + bộ sưu tập trang chủ
 let heroSlideIndex = 0;     // MỚI: ảnh banner đang hiện
-// BẢN GOM ĐƠN: tắt hẳn banner, bộ sưu tập danh mục, sản phẩm nổi bật trên trang chủ
-// — kể cả khi dữ liệu cũ (homepage-content.json) vẫn còn cấu hình sẵn từ trước.
-const HOMEPAGE_LITE_MODE = true;
 let vnAddress = null;       // MỚI: danh sách Tỉnh/Xã chuẩn cho form đặt hàng
 let activeCat = 'all';
 let categoriesList = []; // MỚI: danh sách danh mục cho sidebar desktop
@@ -17,8 +14,8 @@ let flashSales = []; // MỚI: các chương trình Flash Sale ĐANG CHO HIỂN 
 let policiesContent = null; // MỚI: nội dung 5 trang chính sách, hiện ở cuối trang chủ
 let siteSearchQuery = ''; // MỚI: từ khoá tìm kiếm sản phẩm
 let wantGiftWrap = false;  // MỚI: khách có chọn gói quà tặng lúc checkout không
-let selectedAddOnIds = new Set(); // MỚI: các dịch vụ/sản phẩm kèm thêm khách đã tick
 let wantCodShipping = false; // MỚI: khách chọn trả phí ship khi nhận hàng (SPX thu hộ) thay vì chuyển khoản trước
+let selectedAddOnIds = new Set(); // MỚI: các dịch vụ/sản phẩm kèm thêm khách đã tick
 let cart = JSON.parse(localStorage.getItem('giftlab_cart') || '{}');
 let selectedCartKeys = new Set(Object.keys(cart)); // MỚI: mặc định tick chọn sẵn mọi thứ đang có trong giỏ khi tải lại trang
 // drawerView: 'cart' | 'variant' | 'checkout' | 'success' | 'lookup' | 'lookup-list' | 'lookup-result'
@@ -33,9 +30,6 @@ let selectedMergeOrderIds = new Set(); // MỚI: đơn đang tick chọn để g
 let mergeQuoteResult = null;           // MỚI: kết quả tính thử phí ship gộp (chưa xác nhận)
 let mergeConfirmResult = null;         // MỚI: kết quả sau khi xác nhận gộp thật (kèm QR)
 let wantMergeCod = false;              // MỚI: khách chọn trả phí ship GỘP khi nhận hàng thay vì chuyển khoản
-// MỚI: lưu tạm thông tin form đang nhập ở bước checkout - để dù có tick/bỏ tick COD
-// hay quay lại giỏ hàng rồi vào lại, thông tin đã gõ vẫn còn nguyên (không bị mất)
-let checkoutForm = { customerName: '', phone: '', customerEmail: '', province: '', ward: '', addressDetail: '', note: '' };
 
 const STATUS_LABEL = {
   moi: 'Đơn mới, đang chờ xác nhận',
@@ -196,17 +190,6 @@ async function loadProducts(){
   renderHeroAndBelowSections(); // MỚI: khuyến mãi + Flash Sale (thay banner / dưới danh mục)
   renderTrustStrip(); // MỚI
   renderPolicySection(); // MỚI
-  openSharedProductFromUrl(); // MỚI: nếu link có ?p=<mã sản phẩm> thì tự mở đúng sản phẩm đó
-}
-
-// MỚI: khách bấm vào link/mã QR chia sẻ 1 sản phẩm đang gom (dạng ?p=<mã sản phẩm>)
-// thì tự mở popup chi tiết sản phẩm đó ngay khi vào trang, không cần lướt tìm.
-function openSharedProductFromUrl(){
-  const params = new URLSearchParams(window.location.search);
-  const sharedId = params.get('p');
-  if(!sharedId) return;
-  const exists = products.find(p => String(p.id) === sharedId);
-  if(exists) openProductDetail(sharedId, false);
 }
 
 // MỚI: banner trang chủ - lấy danh sách ảnh đã nhập (bỏ qua ô trống chưa nhập)
@@ -217,11 +200,6 @@ function getHeroSlides(){
 function renderHeroSlide(){
   const img = document.getElementById('heroSlideImg');
   if(!img) return;
-  if(HOMEPAGE_LITE_MODE){
-    img.style.display = 'none';
-    document.querySelectorAll('.hero-arrow').forEach(btn => { btn.style.display = 'none'; });
-    return;
-  }
   const slides = getHeroSlides();
   if(slides.length === 0){
     // MỚI: không còn ảnh mặc định gắn cứng — nếu chưa cài banner nào thì giữ ẩn ảnh,
@@ -264,7 +242,6 @@ function heroNextSlide(){
 function renderCollections(){
   const wrap = document.getElementById('collections');
   if(!wrap) return;
-  if(HOMEPAGE_LITE_MODE){ wrap.innerHTML = ''; wrap.style.display = 'none'; return; }
   const items = (homepageContent && homepageContent.collections)
     ? homepageContent.collections.filter(c => c.image && !c.hidden)
     : [];
@@ -413,7 +390,6 @@ function renderTrustStrip(){
 function renderFeaturedProducts(){
   const wrap = document.getElementById('featuredProducts');
   if(!wrap) return;
-  if(HOMEPAGE_LITE_MODE){ wrap.innerHTML = ''; wrap.style.display = 'none'; return; }
   const fp = homepageContent && homepageContent.featuredProducts;
   const ids = (fp && fp.productIds) || [];
   const items = ids.map(id => products.find(p => p.id === id)).filter(p => p && !p.hidden);
@@ -520,11 +496,6 @@ function getBelowOccupant(){
 function renderHeroSection(){
   const normalHero = document.getElementById('normalHeroSection');
   const section = document.getElementById('promoHeroSection');
-  if(HOMEPAGE_LITE_MODE){
-    if(normalHero) normalHero.style.display = 'none';
-    if(section){ section.style.display = 'none'; section.innerHTML = ''; }
-    return;
-  }
   if(!section) return;
   const occupant = getHeroOccupant();
   if(!occupant){
@@ -548,7 +519,6 @@ function renderHeroSection(){
 function renderBelowSection(){
   const section = document.getElementById('promoBelowSection');
   if(!section) return;
-  if(HOMEPAGE_LITE_MODE){ section.style.display = 'none'; section.innerHTML = ''; return; }
   const occupant = getBelowOccupant();
   if(!occupant){
     section.style.display = 'none';
@@ -1110,7 +1080,8 @@ function renderLookupResult(){
     </div>
   ` : '';
 
-  // MỚI: nếu đơn chưa thanh toán, hiện lại mã QR để khách chuyển khoản
+  // MỚI: nếu đơn chưa thanh toán, hiện lại mã QR để khách chuyển khoản (đúng số tiền
+  // THỰC CẦN chuyển - không gồm phí ship nếu đơn chọn trả ship khi nhận hàng)
   const qrBlock = (!o.paid && o.qrUrl) ? `
     <div class="qr-box">
       <p style="font-weight:700; margin-bottom:10px;">Chưa nhận được thanh toán cho đơn này</p>
@@ -1127,7 +1098,6 @@ function renderLookupResult(){
     <div class="order-items" style="margin:12px 0;">${itemsHtml}</div>
     <div class="foot-row"><span>Tiền hàng</span><b>${fmt(o.total)}</b></div>
     <div class="foot-row"><span>Phí vận chuyển</span><b>${o.mergeGroupId ? 'Đã gộp với đơn khác' : (o.freeshipApplied ? 'Miễn phí' : fmt(o.shippingFee || 0))}${o.codShipping ? ' (thu khi giao)' : ''}</b></div>
-    ${o.mergeGroupId ? `<div class="qr-box" style="text-align:left;"><p style="font-size:13px; margin:0;">Đơn này đã gộp chung với ${(o.mergeOrderIds || []).filter(id => id !== o.id).map(id => '#' + id).join(', ')} — phí ship gộp ${fmt(o.mergeShippingFee || 0)}, ${o.mergeShippingPaid ? 'đã thanh toán' : 'chưa thanh toán'}.</p></div>` : ''}
     ${o.giftWrap ? `<div class="foot-row"><span>🎁 Gói quà tặng</span><b>${o.giftWrapFee > 0 ? fmt(o.giftWrapFee) : 'Miễn phí'}</b></div>` : ''}
     ${(o.addOns && o.addOns.length) ? `<div class="foot-row"><span>🧩 ${o.addOns.map(a => a.label).join(', ')}</span><b>${fmt(o.addOnsFee || 0)}</b></div>` : ''}
     <div class="foot-row"><span>Tổng cộng</span><b>${fmt(o.grandTotal || o.total)}</b></div>
@@ -1248,7 +1218,7 @@ function renderDrawer(){
       <div class="foot-row"><span>Phí vận chuyển</span><b>${lastOrder.freeshipApplied ? 'Miễn phí (' + lastOrder.freeshipApplied + ')' : fmt(lastOrder.shippingFee || 0)}${lastOrder.codShipping ? ' (thu khi giao)' : ''}</b></div>
       ${lastOrder.giftWrap ? `<div class="foot-row"><span>🎁 Gói quà tặng</span><b>${lastOrder.giftWrapFee > 0 ? fmt(lastOrder.giftWrapFee) : 'Miễn phí'}</b></div>` : ''}
       ${(lastOrder.addOns && lastOrder.addOns.length) ? `<div class="foot-row"><span>🧩 ${lastOrder.addOns.map(a => a.label).join(', ')}</span><b>${fmt(lastOrder.addOnsFee || 0)}</b></div>` : ''}
-      <div class="foot-row"><span>Tổng giá trị đơn</span><b>${fmt(lastOrder.grandTotal || lastOrder.total)}</b></div>
+      <div class="foot-row"><span>Tổng cộng</span><b>${fmt(lastOrder.grandTotal || lastOrder.total)}</b></div>
     ` : '';
     const qrBlock = lastOrder && lastOrder.qrUrl ? `
       <div class="qr-box">
@@ -1285,31 +1255,32 @@ function renderDrawer(){
     list.innerHTML = `
       <div class="back-link" onclick="drawerView='cart'; renderDrawer();">← Quay lại giỏ hàng</div>
       ${pendingSaleNotice}
-      <div class="form-field"><label>Họ tên</label><input type="text" id="cf-name" placeholder="Nguyễn Văn A" value="${escapeHtml(checkoutForm.customerName)}" oninput="checkoutForm.customerName=this.value"></div>
-      <div class="form-field"><label>Số điện thoại</label><input type="tel" id="cf-phone" placeholder="09xxxxxxxx" value="${escapeHtml(checkoutForm.phone)}" oninput="checkoutForm.phone=this.value"></div>
-      <div class="form-field"><label>Gmail (không bắt buộc - để nhận thông báo mã vận đơn)</label><input type="email" id="cf-email" placeholder="ban@gmail.com" value="${escapeHtml(checkoutForm.customerEmail || '')}" oninput="checkoutForm.customerEmail=this.value"></div>
+      <div class="form-field"><label>Họ tên</label><input type="text" id="cf-name" placeholder="Nguyễn Văn A"></div>
+      <div class="form-field"><label>Số điện thoại</label><input type="tel" id="cf-phone" placeholder="09xxxxxxxx"></div>
+      <!-- MỚI: email không bắt buộc - có thì tự động gửi mã vận đơn qua email khi shop cập nhật -->
+      <div class="form-field"><label>Email (không bắt buộc, để nhận mã vận đơn tự động)</label><input type="email" id="cf-email" placeholder="ban@gmail.com"></div>
       <div class="form-field searchable-select">
         <label>Tỉnh/Thành phố</label>
         <div class="searchable-select-box">
-          <input type="text" id="cf-province-search" placeholder="Gõ để tìm Tỉnh/Thành phố..." autocomplete="off" value="${escapeHtml(checkoutForm.province)}"
+          <input type="text" id="cf-province-search" placeholder="Gõ để tìm Tỉnh/Thành phố..." autocomplete="off"
             oninput="onProvinceSearchInput(this.value)" onfocus="onProvinceSearchInput(this.value)"
             onblur="setTimeout(()=>{const d=document.getElementById('cf-province-dropdown'); if(d) d.style.display='none';}, 150)">
-          <input type="hidden" id="cf-province" value="${escapeHtml(checkoutForm.province)}">
+          <input type="hidden" id="cf-province" value="">
           <div class="searchable-dropdown" id="cf-province-dropdown"></div>
         </div>
       </div>
       <div class="form-field searchable-select">
         <label>Xã/Phường</label>
         <div class="searchable-select-box">
-          <input type="text" id="cf-ward-search" placeholder="${checkoutForm.province ? 'Gõ để tìm Xã/Phường...' : 'Chọn Tỉnh/Thành trước'}" autocomplete="off" ${checkoutForm.province ? '' : 'disabled'} value="${escapeHtml(checkoutForm.ward)}"
+          <input type="text" id="cf-ward-search" placeholder="Chọn Tỉnh/Thành trước" autocomplete="off" disabled
             oninput="onWardSearchInput(this.value)" onfocus="onWardSearchInput(this.value)"
             onblur="setTimeout(()=>{const d=document.getElementById('cf-ward-dropdown'); if(d) d.style.display='none';}, 150)">
-          <input type="hidden" id="cf-ward" value="${escapeHtml(checkoutForm.ward)}">
+          <input type="hidden" id="cf-ward" value="">
           <div class="searchable-dropdown" id="cf-ward-dropdown"></div>
         </div>
       </div>
-      <div class="form-field"><label>Địa chỉ chi tiết</label><textarea id="cf-address-detail" placeholder="Số nhà, tên đường..." oninput="checkoutForm.addressDetail=this.value">${escapeHtml(checkoutForm.addressDetail)}</textarea></div>
-      <div class="form-field"><label>Ghi chú (không bắt buộc)</label><textarea id="cf-note" placeholder="Giao giờ hành chính, gọi trước khi giao..." oninput="checkoutForm.note=this.value">${escapeHtml(checkoutForm.note)}</textarea></div>
+      <div class="form-field"><label>Địa chỉ chi tiết</label><textarea id="cf-address-detail" placeholder="Số nhà, tên đường..."></textarea></div>
+      <div class="form-field"><label>Ghi chú (không bắt buộc)</label><textarea id="cf-note" placeholder="Giao giờ hành chính, gọi trước khi giao..."></textarea></div>
       ${renderGiftWrapCheckbox()}
       ${renderAddOnCheckboxes()}
       <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin:10px 0; cursor:pointer;">
@@ -1408,7 +1379,6 @@ function selectProvince(name){
   document.getElementById('cf-province').value = name;
   document.getElementById('cf-province-search').value = name;
   document.getElementById('cf-province-dropdown').style.display = 'none';
-  checkoutForm.province = name; // MỚI
   onProvinceChange();
 }
 
@@ -1423,7 +1393,6 @@ function onProvinceChange(){
   wardSearch.disabled = !province;
   wardSearch.placeholder = province ? 'Gõ để tìm Xã/Phường...' : 'Chọn Tỉnh/Thành trước';
   if(wardDropdown) wardDropdown.style.display = 'none';
-  checkoutForm.ward = ''; // MỚI
 }
 
 // MỚI: gõ tìm Xã/Phường (chỉ trong phạm vi Tỉnh/Thành đã chọn)
@@ -1446,18 +1415,15 @@ function selectWard(name){
   document.getElementById('cf-ward').value = name;
   document.getElementById('cf-ward-search').value = name;
   document.getElementById('cf-ward-dropdown').style.display = 'none';
-  checkoutForm.ward = name; // MỚI
 }
 
-// MỚI: bật/tắt trả ship khi nhận hàng NGAY tại bước nhập thông tin - vẽ lại màn hình
-// nhưng toàn bộ ô đã gõ (tên/sđt/địa chỉ/ghi chú) được điền lại từ checkoutForm nên
-// không bị mất, chỉ có số tiền cần chuyển khoản được tính lại cho đúng
+// MỚI: bật/tắt gói quà - cập nhật dòng phí gói quà + gọi lại xem trước tổng tiền
+// MỚI: bật/tắt lựa chọn trả phí ship khi nhận hàng - cập nhật lại dòng "Cần chuyển khoản"
 function toggleCodShippingCheckout(checked){
   wantCodShipping = checked;
   renderDrawer();
 }
 
-// MỚI: bật/tắt gói quà - cập nhật dòng phí gói quà + gọi lại xem trước tổng tiền
 function toggleGiftWrap(checked){
   wantGiftWrap = checked;
   const row = document.getElementById('cf-giftwrap-row');
@@ -1528,7 +1494,7 @@ async function loadShippingPreview(items){
 async function submitOrder(){
   const customerName = document.getElementById('cf-name').value.trim();
   const phone = document.getElementById('cf-phone').value.trim();
-  const customerEmail = document.getElementById('cf-email').value.trim(); // MỚI: nhận thông báo mã vận đơn
+  const email = document.getElementById('cf-email').value.trim(); // MỚI: không bắt buộc
   const province = document.getElementById('cf-province').value; // MỚI
   const ward = document.getElementById('cf-ward').value;         // MỚI
   const addressDetail = document.getElementById('cf-address-detail').value.trim(); // MỚI
@@ -1536,10 +1502,6 @@ async function submitOrder(){
 
   if(!customerName || !phone || !province || !ward || !addressDetail){
     alert('Vui lòng điền đầy đủ họ tên, số điện thoại, Tỉnh/Thành, Xã/Phường và địa chỉ chi tiết.');
-    return;
-  }
-  if(customerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)){
-    alert('Email chưa đúng định dạng, kiểm tra lại giúp mình.');
     return;
   }
 
@@ -1554,7 +1516,7 @@ async function submitOrder(){
   try{
     const res = await fetch('/api/orders', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customerName, phone, customerEmail, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds: Array.from(selectedAddOnIds), codShipping: wantCodShipping }) // MỚI: customerEmail, codShipping
+      body: JSON.stringify({ customerName, phone, email, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds: Array.from(selectedAddOnIds), codShipping: wantCodShipping }) // MỚI: email, selectedAddOnIds, codShipping
     });
     if(!res.ok){
       const err = await res.json();
@@ -1572,9 +1534,8 @@ async function submitOrder(){
     });
     saveCart();
     wantGiftWrap = false; // MỚI: reset lại lựa chọn gói quà cho lần đặt hàng tiếp theo
-    selectedAddOnIds = new Set(); // MỚI: reset lại lựa chọn dịch vụ kèm thêm
     wantCodShipping = false; // MỚI: reset lại lựa chọn trả ship khi nhận hàng
-    checkoutForm = { customerName: '', phone: '', customerEmail: '', province: '', ward: '', addressDetail: '', note: '' }; // MỚI
+    selectedAddOnIds = new Set(); // MỚI: reset lại lựa chọn dịch vụ kèm thêm
     drawerView = 'success';
     updateCartUI();
   } catch(e){
@@ -1590,11 +1551,7 @@ async function submitOrder(){
 const POLICY_ORDER = ['about', 'terms', 'shipping', 'returns', 'privacy', 'payment', 'contact'];
 function renderPolicySection(){
   const wrap = document.getElementById('policySection');
-  if(!wrap) return;
-  // BẢN GOM ĐƠN: ẩn hẳn khối Chính sách trên trang chủ khách, không cần cho công cụ
-  // đặt đơn + quản lý kho vận
-  if(HOMEPAGE_LITE_MODE){ wrap.innerHTML = ''; wrap.style.display = 'none'; return; }
-  if(!policiesContent) return;
+  if(!wrap || !policiesContent) return;
   wrap.innerHTML = `
     <h2 style="margin-bottom:14px;">Chính sách</h2>
     ${POLICY_ORDER.map((key, i) => `
