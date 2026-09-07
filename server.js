@@ -100,6 +100,29 @@ function calculateAddOnsFee(addOnsConfig, selectedAddOnIds) {
 }
 
 // Gom logic tính giỏ hàng + phí ship dùng chung cho /api/orders và /api/shipping-estimate
+// MỚI: trừ hoặc cộng trả tồn kho theo danh sách item của 1 đơn hàng.
+// sign = -1 khi đặt đơn thành công (trừ kho ngay, kể cả CHƯA thanh toán).
+// sign = +1 khi đơn bị huỷ (cộng trả lại, tránh kho bị trừ sai vĩnh viễn).
+// Không throw lỗi ra ngoài - lỗi cập nhật kho không được phép làm hỏng việc đặt/huỷ đơn.
+async function adjustStock(items, sign) {
+  try {
+    const products = await productsStore.listProducts();
+    let changed = false;
+    for (const item of (items || [])) {
+      const product = products.find(p => p.id === String(item.id));
+      if (!product || !product.variants || !product.variants.length) continue;
+      const variant = product.variants[item.variantIndex] || product.variants[0];
+      if (!variant) continue;
+      variant.stock = Math.max(0, (variant.stock || 0) + sign * (item.qty || 0));
+      product.totalStock = product.variants.reduce((s, v) => s + (v.stock || 0), 0);
+      changed = true;
+    }
+    if (changed) await productsStore.saveProducts(products);
+  } catch (err) {
+    console.error('Lỗi cập nhật tồn kho:', err.message);
+  }
+}
+
 async function buildOrderPricing(items, wantGiftWrap, selectedAddOnIds) {
   const products = await productsStore.listProducts();
   const [promotions, flashSales] = await Promise.all([
@@ -111,6 +134,7 @@ async function buildOrderPricing(items, wantGiftWrap, selectedAddOnIds) {
   ]);
   let total = 0;
   const orderItems = [];
+  const insufficientStock = []; // MỚI: danh sách SKU không đủ tồn kho so với số lượng đặt
   for (const item of (items || [])) {
     const product = products.find(p => p.id === String(item.id));
     if (!product) continue;
@@ -118,6 +142,12 @@ async function buildOrderPricing(items, wantGiftWrap, selectedAddOnIds) {
     const vIdx = Number.isInteger(item.variantIndex) ? item.variantIndex : 0;
     const variant = variants[vIdx] || variants[0];
     const qty = Math.max(1, Number(item.qty) || 1);
+    // MỚI: chặn đặt vượt quá tồn kho hiện có của đúng SKU này
+    const available = Number(variant.stock) || 0;
+    if (qty > available) {
+      insufficientStock.push({ name: product.name, variantName: variant.name, available, requested: qty });
+      continue; // không cộng dồn tiền/thêm vào orderItems cho SKU không đủ hàng
+    }
     // MỚI: nếu sản phẩm/SKU này đang trong 1 chương trình khuyến mãi HOẶC Flash Sale còn
     // hiệu lực (đã tới giờ bắt đầu), tự tính lại giá đã giảm - đây mới là giá thật sự tính
     // tiền, không phải giá gốc. Ưu tiên khuyến mãi trước, nếu không có mới xét Flash Sale.
@@ -158,7 +188,8 @@ async function buildOrderPricing(items, wantGiftWrap, selectedAddOnIds) {
     addOns: addOnsResult.applied, // MỚI: danh sách dịch vụ kèm thêm đã chọn (để lưu lại đúng tên/giá lúc đặt)
     addOnsFee: addOnsResult.fee, // MỚI
     grandTotal: total + shippingResult.fee + giftWrapFee + addOnsResult.fee,
-    totalWeightGram: shippingResult.totalWeightGram || 0 // MỚI: dùng để xuất Excel SPX (cột "Tổng cân nặng bưu gửi")
+    totalWeightGram: shippingResult.totalWeightGram || 0, // MỚI: dùng để xuất Excel SPX (cột "Tổng cân nặng bưu gửi")
+    insufficientStock // MỚI: danh sách SKU không đủ tồn kho (rỗng nếu đủ hàng hết)
   };
 }
 
@@ -904,6 +935,15 @@ app.post('/api/orders', async (req, res) => {
     return res.status(400).json({ error: 'Không có sản phẩm hợp lệ trong giỏ hàng' });
   }
 
+  // MỚI: chặn đặt hàng nếu có SKU không đủ tồn kho - báo rõ tên sản phẩm/phân loại và
+  // số lượng còn lại để khách tự điều chỉnh giỏ hàng
+  if (pricing.insufficientStock.length > 0) {
+    const detail = pricing.insufficientStock
+      .map(i => `${i.name}${i.variantName ? ' - ' + i.variantName : ''} (còn ${i.available}, bạn đặt ${i.requested})`)
+      .join('; ');
+    return res.status(400).json({ error: `Không đủ hàng trong kho: ${detail}. Vui lòng giảm số lượng hoặc bỏ sản phẩm này khỏi giỏ hàng.` });
+  }
+
   // MỚI: chặn không cho đặt vượt giới hạn số lượng/1 SĐT của các sản phẩm đang khuyến mãi
   const limitedItems = pricing.orderItems.filter(i => i.promoId && i.promoLimit != null);
   if (limitedItems.length > 0) {
@@ -955,7 +995,7 @@ app.post('/api/orders', async (req, res) => {
       createdAt: new Date().toISOString()
     };
     await ordersStore.appendOrder(newOrder);
-
+    await adjustStock(pricing.orderItems, -1); // MỚI: trừ kho ngay khi đặt đơn, kể cả chưa thanh toán
     // MỚI: nội dung CK đổi thành mã đơn + số điện thoại (dễ đối chiếu hơn tên khách)
     // Số tiền QR: nếu chọn trả ship khi nhận hàng thì KHÔNG gồm phí ship
     const dueAmount = computeDueAmount(newOrder);
@@ -1368,6 +1408,11 @@ app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
     const updated = await ordersStore.updateOrder(id, patch);
     if (!updated) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
 
+    // MỚI: đơn VỪA chuyển sang huỷ (trước đó chưa huỷ) - cộng trả lại tồn kho
+    if (wantsCancel && current.status !== 'huy') {
+      await adjustStock(current.items, +1);
+    }
+
     // MỚI: vừa gắn mã vận đơn (trước đó chưa có) - tự báo khách qua Gmail, không
     // await để không làm chậm phản hồi cho admin
     if (trackingCode && !current.trackingCode) {
@@ -1412,6 +1457,7 @@ app.post('/api/orders/cancel', async (req, res) => {
       return res.status(400).json({ error: 'Đơn này không còn ở trạng thái có thể huỷ.' });
     }
     const updated = await ordersStore.updateOrder(Number(orderId), { status: 'huy' });
+    await adjustStock(order.items, +1); // MỚI: cộng trả lại tồn kho khi khách tự huỷ đơn
     res.json(updated);
   } catch (err) {
     console.error('Lỗi khách tự huỷ đơn:', err.message);
