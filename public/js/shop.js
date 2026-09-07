@@ -1287,7 +1287,7 @@ function renderDrawer(){
       ${pendingSaleNotice}
       <div class="form-field"><label>Họ tên</label><input type="text" id="cf-name" placeholder="Nguyễn Văn A" value="${escapeHtml(checkoutForm.customerName)}" oninput="checkoutForm.customerName=this.value"></div>
       <div class="form-field"><label>Số điện thoại</label><input type="tel" id="cf-phone" placeholder="09xxxxxxxx" value="${escapeHtml(checkoutForm.phone)}" oninput="checkoutForm.phone=this.value"></div>
-      <div class="form-field"><label>Gmail (để nhận thông báo mã vận đơn)</label><input type="email" id="cf-email" placeholder="ban@gmail.com" value="${escapeHtml(checkoutForm.customerEmail || '')}" oninput="checkoutForm.customerEmail=this.value"></div>
+      <div class="form-field"><label>Gmail (không bắt buộc - để nhận thông báo mã vận đơn)</label><input type="email" id="cf-email" placeholder="ban@gmail.com" value="${escapeHtml(checkoutForm.customerEmail || '')}" oninput="checkoutForm.customerEmail=this.value"></div>
       <div class="form-field searchable-select">
         <label>Tỉnh/Thành phố</label>
         <div class="searchable-select-box">
@@ -1534,11 +1534,11 @@ async function submitOrder(){
   const addressDetail = document.getElementById('cf-address-detail').value.trim(); // MỚI
   const note = document.getElementById('cf-note').value.trim();
 
-  if(!customerName || !phone || !customerEmail || !province || !ward || !addressDetail){
-    alert('Vui lòng điền đầy đủ họ tên, số điện thoại, Gmail, Tỉnh/Thành, Xã/Phường và địa chỉ chi tiết.');
+  if(!customerName || !phone || !province || !ward || !addressDetail){
+    alert('Vui lòng điền đầy đủ họ tên, số điện thoại, Tỉnh/Thành, Xã/Phường và địa chỉ chi tiết.');
     return;
   }
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)){
+  if(customerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)){
     alert('Email chưa đúng định dạng, kiểm tra lại giúp mình.');
     return;
   }
