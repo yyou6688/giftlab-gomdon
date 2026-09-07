@@ -15,7 +15,6 @@ const ordersStore = require('./ordersStore');
 const productsStore = require('./productsStore'); // MỚI: sản phẩm giờ lưu Google Sheets, không mất khi deploy lại
 const homepageStore = require('./homepageStore'); // MỚI: trang chủ giờ lưu Google Sheets, không mất khi deploy lại
 const policiesStore = require('./policiesStore'); // MỚI: các trang chính sách (điều khoản, vận chuyển, đổi trả, bảo mật, thanh toán) lưu Google Sheets
-const emailNotify = require('./emailNotify'); // MỚI: gửi email báo chủ shop khi có đơn hàng mới (Gmail SMTP)
 const categoriesStore = require('./categoriesStore'); // MỚI: danh mục giờ lưu Google Sheets, không mất khi deploy lại
 const promotionsStore = require('./promotionsStore'); // MỚI: chương trình khuyến mãi lưu Google Sheets, không mất khi deploy lại
 const flashSalesStore = require('./flashSalesStore'); // MỚI: chương trình Flash Sale, lưu riêng (Google Sheets tab "FlashSales")
@@ -24,6 +23,8 @@ const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 // Module tính phí ship (dựa trên cân nặng từng sản phẩm)
 const { calculateShippingFee, loadShippingConfig, saveShippingConfig } = require('./shippingCalculator');
+// MỚI: gửi email Gmail báo đơn mới / đã thanh toán
+const { sendNotifyEmail, sendTrackingEmailToCustomer } = require('./mailer'); // MỚI: sendTrackingEmailToCustomer
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
@@ -192,16 +193,6 @@ async function buildOrderPricing(items, wantGiftWrap, selectedAddOnIds) {
   };
 }
 
-// MỚI: số tiền THỰC CẦN chuyển khoản của 1 đơn - nếu khách chọn "trả phí ship khi
-// nhận hàng" (codShipping), số tiền cần chuyển sẽ KHÔNG gồm phí ship (phần đó SPX
-// thu hộ lúc giao), chỉ gồm tiền hàng + gói quà + dịch vụ thêm (nếu có)
-function computeDueAmount(order) {
-  if (order.codShipping) {
-    return (order.total || 0) + (order.giftWrapFee || 0) + (order.addOnsFee || 0);
-  }
-  return order.grandTotal || order.total || 0;
-}
-
 // ---------- Middleware kiểm tra quyền admin ----------
 function requireAdmin(req, res, next) {
   const key = req.headers['x-admin-key'];
@@ -225,25 +216,41 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
+// MỚI: form thêm sản phẩm giờ nhận đủ mục như khi sửa - nhiều phân loại (SKU, mỗi
+// phân loại có tên/ảnh/số lượng/giá/cân nặng riêng), mô tả, nhiều ảnh mô tả, ẩn/hiện.
+// Vẫn nhận được price/stock kiểu cũ (1 phân loại) để không hỏng nơi nào còn gọi kiểu cũ.
 app.post('/api/products', requireAdmin, async (req, res) => {
-  const { name, category, price, stock, image } = req.body;
-  if (!name || !category || price == null) {
-    return res.status(400).json({ error: 'Thiếu tên, danh mục hoặc giá' });
+  const { name, category, image, description, variants, detailImages, hidden, price, stock } = req.body;
+  if (!name || !category) {
+    return res.status(400).json({ error: 'Thiếu tên hoặc danh mục' });
   }
   try {
     const products = await productsStore.listProducts();
     const newId = String(Date.now());
-    const p = Number(price);
-    const s = Number(stock) || 0;
+
+    const cleanVariants = (Array.isArray(variants) && variants.length ? variants : [{
+      name: null, price: Number(price) || 0, stock: Number(stock) || 0, image: '', weight: null
+    }]).map(v => ({
+      name: v.name || null,
+      price: Number(v.price) || 0,
+      stock: Number(v.stock) || 0,
+      image: v.image || '',
+      weight: (v.weight === '' || v.weight === undefined || v.weight === null) ? null : Number(v.weight),
+    }));
+    const prices = cleanVariants.map(v => v.price).filter(p => p > 0);
+
     const newProduct = {
       id: newId,
       name,
       category,
       image: image || '',
-      variants: [{ name: null, price: p, stock: s }],
-      priceMin: p,
-      priceMax: p,
-      totalStock: s
+      description: description || '',
+      variants: cleanVariants,
+      detailImages: Array.isArray(detailImages) ? detailImages.filter(Boolean) : [],
+      priceMin: prices.length ? Math.min(...prices) : 0,
+      priceMax: prices.length ? Math.max(...prices) : 0,
+      totalStock: cleanVariants.reduce((s, v) => s + v.stock, 0),
+      hidden: Boolean(hidden),
     };
     products.push(newProduct);
     await productsStore.saveProducts(products);
@@ -251,6 +258,49 @@ app.post('/api/products', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Lỗi thêm sản phẩm:', err.message);
     res.status(500).json({ error: 'Không thêm được sản phẩm' });
+  }
+});
+
+// MỚI: sửa hàng loạt số lượng/cân nặng/giá cho TOÀN BỘ SKU của các sản phẩm đã chọn
+// Body: { ids: [...], stock, weight, priceMode: 'set'|'pct', priceValue }
+// - stock/weight: để trống (undefined/null/'') = giữ nguyên giá trị riêng của từng SKU
+// - priceMode 'set': đặt thẳng priceValue làm giá mới cho mọi SKU
+// - priceMode 'pct': tăng/giảm priceValue % so với giá hiện tại của từng SKU (VD -10 = giảm 10%)
+app.post('/api/admin/products/bulk-edit', requireAdmin, async (req, res) => {
+  const { ids, stock, weight, priceMode, priceValue } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Thiếu danh sách sản phẩm' });
+  }
+  const hasStock = stock !== undefined && stock !== null && stock !== '';
+  const hasWeight = weight !== undefined && weight !== null && weight !== '';
+  const hasPrice = priceValue !== undefined && priceValue !== null && priceValue !== '';
+  try {
+    const products = await productsStore.listProducts();
+    const idSet = new Set(ids.map(String));
+    let count = 0;
+    for (const p of products) {
+      if (!idSet.has(p.id)) continue;
+      const variants = (p.variants && p.variants.length) ? p.variants : [];
+      for (const v of variants) {
+        if (hasStock) v.stock = Number(stock);
+        if (hasWeight) v.weight = Number(weight);
+        if (hasPrice) {
+          v.price = priceMode === 'pct'
+            ? Math.round(v.price * (1 + Number(priceValue) / 100))
+            : Number(priceValue);
+        }
+      }
+      const prices = variants.map(v => v.price).filter(pr => pr > 0);
+      p.priceMin = prices.length ? Math.min(...prices) : 0;
+      p.priceMax = prices.length ? Math.max(...prices) : 0;
+      p.totalStock = variants.reduce((s, v) => s + (v.stock || 0), 0);
+      count++;
+    }
+    await productsStore.saveProducts(products);
+    res.json({ success: true, count });
+  } catch (err) {
+    console.error('Lỗi sửa hàng loạt sản phẩm:', err.message);
+    res.status(500).json({ error: 'Không sửa hàng loạt được' });
   }
 });
 
@@ -469,6 +519,46 @@ app.post('/api/admin/products/bulk-set-category', requireAdmin, async (req, res)
   } catch (err) {
     console.error('Lỗi đổi danh mục hàng loạt:', err.message);
     res.status(500).json({ error: 'Không đổi được danh mục' });
+  }
+});
+
+// MỚI: ẩn hàng loạt các sản phẩm đã tick chọn trong tab Sản phẩm
+app.post('/api/admin/products/bulk-hide', requireAdmin, async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Thiếu danh sách sản phẩm' });
+  }
+  try {
+    const products = await productsStore.listProducts();
+    const idSet = new Set(ids.map(String));
+    let count = 0;
+    for (const p of products) {
+      if (idSet.has(p.id) && !p.hidden) { p.hidden = true; count++; }
+    }
+    await productsStore.saveProducts(products);
+    res.json({ success: true, count });
+  } catch (err) {
+    console.error('Lỗi ẩn hàng loạt sản phẩm:', err.message);
+    res.status(500).json({ error: 'Không ẩn được sản phẩm' });
+  }
+});
+
+// MỚI: xoá hàng loạt các sản phẩm đã tick chọn trong tab Sản phẩm
+app.post('/api/admin/products/bulk-delete', requireAdmin, async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Thiếu danh sách sản phẩm' });
+  }
+  try {
+    const products = await productsStore.listProducts();
+    const idSet = new Set(ids.map(String));
+    const remaining = products.filter(p => !idSet.has(p.id));
+    const count = products.length - remaining.length;
+    await productsStore.saveProducts(remaining);
+    res.json({ success: true, count });
+  } catch (err) {
+    console.error('Lỗi xoá hàng loạt sản phẩm:', err.message);
+    res.status(500).json({ error: 'Không xoá được sản phẩm' });
   }
 });
 
@@ -816,12 +906,26 @@ app.post('/api/shipping-estimate', async (req, res) => {
 // ĐƠN HÀNG
 // ============================================================
 
+// MỚI: số tiền THỰC CẦN chuyển khoản của 1 đơn - nếu khách chọn "trả phí ship khi
+// nhận hàng" (codShipping), số tiền cần chuyển sẽ KHÔNG gồm phí ship (phần đó SPX
+// thu hộ lúc giao), chỉ gồm tiền hàng + gói quà + dịch vụ thêm (nếu có)
+function computeDueAmount(order) {
+  if (order.codShipping) {
+    return (order.total || 0) + (order.giftWrapFee || 0) + (order.addOnsFee || 0);
+  }
+  return order.grandTotal || order.total || 0;
+}
+
 app.post('/api/orders', async (req, res) => {
-  const { customerName, phone, email, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds, codShipping } = req.body; // MỚI: email, selectedAddOnIds, codShipping
+  const { customerName, phone, customerEmail, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds, codShipping } = req.body; // MỚI: customerEmail, codShipping
 
   // MỚI: bắt buộc chọn Tỉnh/Thành + Xã/Phường + nhập địa chỉ chi tiết (thay cho 1 ô địa chỉ gộp trước đây)
+  // Gmail giờ KHÔNG bắt buộc - không điền thì chỉ đơn giản là không gửi được email tự động báo mã vận đơn
   if (!customerName || !phone || !province || !ward || !addressDetail) {
     return res.status(400).json({ error: 'Thiếu tên, số điện thoại, tỉnh/thành, xã/phường hoặc địa chỉ chi tiết' });
+  }
+  if (customerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(customerEmail))) {
+    return res.status(400).json({ error: 'Gmail không đúng định dạng' });
   }
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Giỏ hàng trống' });
@@ -869,7 +973,7 @@ app.post('/api/orders', async (req, res) => {
       id: await ordersStore.nextOrderId(),
       customerName,
       phone,
-      email: email ? String(email).trim() : '', // MỚI: không bắt buộc, dùng để tự động gửi mã vận đơn
+      customerEmail: customerEmail ? String(customerEmail).trim() : '', // MỚI: không bắt buộc - dùng để báo mã vận đơn qua Gmail khi shop gửi hàng
       address,
       province,          // MỚI
       ward,               // MỚI
@@ -893,11 +997,20 @@ app.post('/api/orders', async (req, res) => {
     };
     await ordersStore.appendOrder(newOrder);
     await adjustStock(pricing.orderItems, -1); // MỚI: trừ kho ngay khi đặt đơn, kể cả chưa thanh toán
-    emailNotify.sendNewOrderEmail(newOrder); // MỚI: báo email cho chủ shop - không dùng await để khách không phải chờ email gửi xong mới nhận được phản hồi đặt hàng thành công
-
-    // MỚI: nếu chọn trả ship khi nhận hàng, số tiền QR KHÔNG gồm phí ship
+    // MỚI: nội dung CK đổi thành mã đơn + số điện thoại (dễ đối chiếu hơn tên khách)
+    // Số tiền QR: nếu chọn trả ship khi nhận hàng thì KHÔNG gồm phí ship
     const dueAmount = computeDueAmount(newOrder);
-    const qrUrl = buildQrUrl(dueAmount, `DH${newOrder.id} ${customerName}`);
+    const qrUrl = buildQrUrl(dueAmount, `DH${newOrder.id} ${phone}`);
+
+    // MỚI: báo có đơn mới qua Gmail - không await để không làm chậm phản hồi cho khách
+    sendNotifyEmail(
+      `Đơn hàng mới DH${newOrder.id}`,
+      `Khách: ${customerName}\nSĐT: ${phone}\nĐịa chỉ: ${address}\n` +
+      `Tổng tiền: ${pricing.grandTotal.toLocaleString('vi-VN')}đ\n` +
+      (newOrder.codShipping ? `Cần chuyển khoản: ${dueAmount.toLocaleString('vi-VN')}đ (phí ship ${pricing.shippingFee.toLocaleString('vi-VN')}đ thu khi giao hàng)\n` : '') +
+      `Sản phẩm:\n${pricing.orderItems.map(i => `- ${i.name}${i.variantName ? ' (' + i.variantName + ')' : ''} x${i.qty}`).join('\n')}`
+    ).catch(() => {});
+
     res.status(201).json({ ...newOrder, qrUrl, dueAmount });
   } catch (err) {
     console.error('Lỗi lưu đơn hàng:', err.message);
@@ -912,6 +1025,78 @@ app.get('/api/orders', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Lỗi đọc đơn hàng:', err.message);
     res.status(500).json({ error: 'Không đọc được danh sách đơn hàng' });
+  }
+});
+
+// MỚI: nhận đơn được đẩy sang từ công cụ Tách đơn SPX (đơn chốt qua Messenger/Zalo,
+// không đi qua form đặt hàng trên web). Khác /api/orders ở chỗ: không tính lại giá theo
+// data/products.json (đơn Messenger có thể có sản phẩm không nằm trong danh sách trên web),
+// dùng đúng số liệu công cụ tách đơn đã tính (đã cộng ship nếu không chọn COD ship).
+app.post('/api/orders/import', requireAdmin, async (req, res) => {
+  const { customerName, phone, customerEmail, province, ward, addressDetail, note, items, total, shippingFee, codShipping } = req.body;
+  if (!customerName || !phone || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Thiếu tên khách, số điện thoại hoặc sản phẩm' });
+  }
+  const address = [addressDetail, ward, province].filter(Boolean).join(', ');
+  const grandTotal = (Number(total) || 0) + (codShipping ? 0 : (Number(shippingFee) || 0));
+  try {
+    const newOrder = {
+      id: await ordersStore.nextOrderId(),
+      customerName,
+      phone,
+      customerEmail: customerEmail || '',
+      address,
+      province: province || '',
+      ward: ward || '',
+      addressDetail: addressDetail || '',
+      note: note || '',
+      items,
+      total: Number(total) || 0,
+      shippingFee: Number(shippingFee) || 0,
+      freeshipApplied: null,
+      giftWrap: false,
+      giftWrapFee: 0,
+      addOns: [],
+      addOnsFee: 0,
+      grandTotal,
+      totalWeightGram: 0,
+      status: 'moi',
+      paid: false,
+      codShipping: Boolean(codShipping && Number(shippingFee) > 0),
+      trackingCode: '',
+      createdAt: new Date().toISOString(),
+      source: 'tach-don' // MỚI: đánh dấu đơn đến từ công cụ tách đơn, để lọc riêng trong tab Đơn hàng
+    };
+    await ordersStore.appendOrder(newOrder);
+    res.status(201).json(newOrder);
+  } catch (err) {
+    console.error('Lỗi nhận đơn từ công cụ tách đơn:', err.message);
+    res.status(500).json({ error: 'Không lưu được đơn hàng, thử lại giúp mình' });
+  }
+});
+
+// MỚI: cập nhật lại 1 đơn ĐÃ đẩy từ công cụ Tách đơn SPX trước đó (đồng bộ tự động
+// mỗi khi shop sửa thông tin đơn trên công cụ tách đơn, không tạo trùng đơn mới)
+app.put('/api/orders/import/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { customerName, phone, customerEmail, province, ward, addressDetail, note, items, total, shippingFee, codShipping } = req.body;
+  if (!customerName || !phone || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Thiếu tên khách, số điện thoại hoặc sản phẩm' });
+  }
+  const address = [addressDetail, ward, province].filter(Boolean).join(', ');
+  const grandTotal = (Number(total) || 0) + (codShipping ? 0 : (Number(shippingFee) || 0));
+  try {
+    const updated = await ordersStore.updateOrder(id, {
+      customerName, phone, customerEmail: customerEmail || '', address,
+      province: province || '', ward: ward || '', addressDetail: addressDetail || '',
+      note: note || '', items, total: Number(total) || 0, shippingFee: Number(shippingFee) || 0,
+      grandTotal, codShipping: Boolean(codShipping && Number(shippingFee) > 0)
+    });
+    if (!updated) return res.status(404).json({ error: 'Không tìm thấy đơn này (có thể đã bị xoá trên web quản lý)' });
+    res.json(updated);
+  } catch (err) {
+    console.error('Lỗi cập nhật đơn từ công cụ tách đơn:', err.message);
+    res.status(500).json({ error: 'Không cập nhật được đơn hàng, thử lại giúp mình' });
   }
 });
 
@@ -967,12 +1152,10 @@ app.post('/api/orders/lookup', async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy đơn hàng — kiểm tra lại mã đơn và số điện thoại' });
     }
     // MỚI: nếu chưa thanh toán, kèm lại mã QR đúng số tiền để khách chuyển khoản
-    // (nếu đơn chọn trả ship khi nhận hàng, số tiền KHÔNG gồm phí ship)
-    const dueAmount = computeDueAmount(order);
     const qrUrl = !order.paid
-      ? buildQrUrl(dueAmount, `DH${order.id} ${order.customerName}`)
+      ? buildQrUrl(computeDueAmount(order), `DH${order.id} ${order.phone}`)
       : null;
-    res.json({ ...order, qrUrl, dueAmount });
+    res.json({ ...order, qrUrl, dueAmount: computeDueAmount(order) });
   } catch (err) {
     console.error('Lỗi tra cứu đơn hàng:', err.message);
     res.status(500).json({ error: 'Không tra cứu được đơn hàng' });
@@ -1105,9 +1288,89 @@ app.post('/api/orders/merge-confirm', async (req, res) => {
   }
 });
 
+// ============================================================
+// WEBHOOK THANH TOÁN - nhận nội dung thông báo biến động số dư (sau này forward
+// từ điện thoại Android relay), tự khớp với đơn đang chờ thanh toán rồi tự
+// chuyển "đã thanh toán" + báo qua Gmail. Endpoint này ĐÃ SẴN SÀNG dùng ngay -
+// chỉ cần trỏ app forward thông báo vào đây khi có điện thoại Android.
+// ============================================================
+
+function normalizeText(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ');
+}
+
+async function matchAndConfirmPayment(amount, content) {
+  const norm = normalizeText(content);
+  const orders = await ordersStore.listOrders();
+  const isMergeNote = norm.includes('phi ship gop don');
+
+  if (isMergeNote) {
+    const candidates = orders.filter(
+      o => o.mergeGroupId && !o.mergeShippingPaid && !o.mergeShippingCod && Math.round(o.mergeShippingFee) === Math.round(amount)
+    );
+    for (const o of candidates) {
+      const phoneDigits = String(o.phone).replace(/\D/g, '');
+      if (phoneDigits && norm.includes(phoneDigits)) {
+        const groupOrders = orders.filter(x => x.mergeGroupId === o.mergeGroupId);
+        for (const go of groupOrders) {
+          await ordersStore.updateOrder(go.id, { mergeShippingPaid: true });
+        }
+        await sendNotifyEmail(
+          `Đã thanh toán - phí ship gộp đơn nhóm #${o.mergeGroupId}`,
+          `Số tiền: ${amount.toLocaleString('vi-VN')}đ\nSĐT: ${o.phone}\nCác đơn trong nhóm: ${groupOrders.map(g => 'DH' + g.id).join(', ')}`
+        );
+        return { matched: true, type: 'merge-shipping', groupId: o.mergeGroupId };
+      }
+    }
+  } else {
+    const candidates = orders.filter(
+      o => !o.paid && o.status !== 'huy' && Math.round(computeDueAmount(o)) === Math.round(amount)
+    );
+    for (const o of candidates) {
+      const phoneDigits = String(o.phone).replace(/\D/g, '');
+      if (phoneDigits && norm.includes(phoneDigits) && norm.includes(String(o.id))) {
+        await ordersStore.updateOrder(o.id, { paid: true });
+        await sendNotifyEmail(
+          `Đã thanh toán - đơn DH${o.id}`,
+          `Số tiền: ${amount.toLocaleString('vi-VN')}đ\nSĐT: ${o.phone}\nKhách: ${o.customerName}`
+        );
+        return { matched: true, type: 'order', orderId: o.id };
+      }
+    }
+  }
+  await sendNotifyEmail(
+    'Có biến động số dư CHƯA khớp được đơn nào - cần kiểm tra tay',
+    `Số tiền: ${amount.toLocaleString('vi-VN')}đ\nNội dung: ${content}`
+  );
+  return { matched: false };
+}
+
+// Body kỳ vọng: { amount: 22000, content: "phi ship gop don 101102 0394026619" }
+// hoặc { amount: 350000, content: "DH105 0394026619" }
+app.post('/api/payment-webhook', async (req, res) => {
+  const secret = req.query.secret || req.headers['x-webhook-secret'];
+  if (!process.env.PAYMENT_WEBHOOK_SECRET || secret !== process.env.PAYMENT_WEBHOOK_SECRET) {
+    return res.status(401).json({ error: 'Sai hoặc thiếu mã bí mật webhook' });
+  }
+  const { amount, content } = req.body;
+  if (!amount || !content) {
+    return res.status(400).json({ error: 'Thiếu amount hoặc content' });
+  }
+  try {
+    const result = await matchAndConfirmPayment(Number(amount), String(content));
+    res.json(result);
+  } catch (err) {
+    console.error('Lỗi xử lý webhook thanh toán:', err.message);
+    res.status(500).json({ error: 'Lỗi xử lý webhook' });
+  }
+});
+
 app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  const { status, paid, trackingCode, province, ward, addressDetail, mergeShippingPaid } = req.body; // MỚI: province/ward/addressDetail, mergeShippingPaid
+  const { status, paid, trackingCode, province, ward, addressDetail, mergeShippingPaid } = req.body; // MỚI: mergeShippingPaid
   // MỚI: 'da_giao' = Đã giao, đang chờ 2 ngày để tự động chuyển "Hoàn thành"
   const validStatus = ['moi', 'cho_giao', 'dang_giao', 'da_giao', 'hoan_thanh', 'huy'];
   if (status !== undefined && !validStatus.includes(status)) {
@@ -1145,13 +1408,16 @@ app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
 
     const updated = await ordersStore.updateOrder(id, patch);
     if (!updated) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
+
     // MỚI: đơn VỪA chuyển sang huỷ (trước đó chưa huỷ) - cộng trả lại tồn kho
     if (wantsCancel && current.status !== 'huy') {
       await adjustStock(current.items, +1);
     }
-    // MỚI: nếu đơn VỪA được gắn mã vận đơn (trước đó chưa có) thì báo email cho khách
+
+    // MỚI: vừa gắn mã vận đơn (trước đó chưa có) - tự báo khách qua Gmail, không
+    // await để không làm chậm phản hồi cho admin
     if (trackingCode && !current.trackingCode) {
-      emailNotify.sendTrackingCodeEmail(updated);
+      sendTrackingEmailToCustomer(updated).catch(() => {});
     }
 
     // MỚI: phí ship gộp là 1 khoản CHUNG cho cả nhóm - tick "đã thu" ở đơn nào cũng
@@ -1241,13 +1507,13 @@ app.patch('/api/orders/bulk', requireAdmin, async (req, res) => {
     if (u.trackingCode !== undefined) patch.trackingCode = u.trackingCode;
     if (u.status !== undefined) patch.status = u.status;
     try {
-      const current = await ordersStore.getOrderById(id); // MỚI: để biết mã vận đơn có phải VỪA được gắn hay không
+      const before = await ordersStore.getOrderById(id); // MỚI: để biết trước đó có mã vận đơn chưa
       const updated = await ordersStore.updateOrder(id, patch);
       if (updated) {
         results.success.push(id);
-        // MỚI: nếu đơn VỪA được gắn mã vận đơn (trước đó chưa có) thì báo email cho khách
-        if (u.trackingCode && current && !current.trackingCode) {
-          emailNotify.sendTrackingCodeEmail(updated);
+        // MỚI: vừa gắn mã vận đơn (trước đó chưa có) - tự báo khách qua Gmail
+        if (u.trackingCode && before && !before.trackingCode) {
+          sendTrackingEmailToCustomer(updated).catch(() => {});
         }
       } else {
         results.notFound.push(id);
