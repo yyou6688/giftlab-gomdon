@@ -1246,6 +1246,7 @@ function renderProductList(){
         <div style="display:flex; flex-direction:column; gap:6px;">
           <button onclick="toggleVariantPanel('${p.id}')">${isOpen ? 'Đóng' : 'Sửa giá/kho/ảnh'}</button>
           <button onclick="toggleSharePanel('${p.id}')">${expandedShareId === p.id ? 'Đóng chia sẻ' : '🔗 Chia sẻ'}</button>
+          <button onclick="duplicateProduct('${p.id}')">📄 Sao chép</button>
           <button class="danger" onclick="deleteProduct('${p.id}')">Xóa</button>
         </div>
       </div>
@@ -1522,6 +1523,31 @@ async function addProduct(){
   } else {
     const err = await res.json().catch(() => ({}));
     msgEl.textContent = err.error || 'Không thêm được sản phẩm.';
+  }
+}
+
+// MỚI: sao chép 1 sản phẩm thành sản phẩm mới (giữ nguyên tên, danh mục, ảnh, mô tả,
+// các phân loại/giá/kho/cân nặng, ảnh mô tả chi tiết). Bản sao mặc định ĐANG ẨN khỏi
+// trang khách để tránh 2 sản phẩm giống hệt nhau hiện ra cùng lúc trước khi kịp sửa
+// (VD đổi tên, đổi giá/kho) - vào "Sửa giá/kho/ảnh" bỏ tick ẩn khi sẵn sàng bán.
+async function duplicateProduct(id){
+  const p = getProductById(id);
+  if(!p) return;
+  const body = {
+    name: `${p.name} (bản sao)`,
+    category: p.category,
+    image: p.image || '',
+    description: p.description || '',
+    variants: (p.variants && p.variants.length ? p.variants : [{ name: null, price: p.priceMin, stock: p.totalStock, image: '', weight: null }])
+      .map(v => ({ name: v.name || null, price: v.price, stock: v.stock, image: v.image || '', weight: v.weight })),
+    detailImages: p.detailImages || [],
+    hidden: true,
+  };
+  const res = await apiFetch('/api/products', { method: 'POST', body: JSON.stringify(body) });
+  if(res.ok){
+    await loadProducts();
+  } else {
+    alert('Không sao chép được sản phẩm.');
   }
 }
 
