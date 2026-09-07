@@ -920,10 +920,11 @@ app.post('/api/orders', async (req, res) => {
   const { customerName, phone, customerEmail, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds, codShipping } = req.body; // MỚI: customerEmail, codShipping
 
   // MỚI: bắt buộc chọn Tỉnh/Thành + Xã/Phường + nhập địa chỉ chi tiết (thay cho 1 ô địa chỉ gộp trước đây)
-  if (!customerName || !phone || !customerEmail || !province || !ward || !addressDetail) {
-    return res.status(400).json({ error: 'Thiếu tên, số điện thoại, Gmail, tỉnh/thành, xã/phường hoặc địa chỉ chi tiết' });
+  // Gmail giờ KHÔNG bắt buộc - không điền thì chỉ đơn giản là không gửi được email tự động báo mã vận đơn
+  if (!customerName || !phone || !province || !ward || !addressDetail) {
+    return res.status(400).json({ error: 'Thiếu tên, số điện thoại, tỉnh/thành, xã/phường hoặc địa chỉ chi tiết' });
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(customerEmail))) {
+  if (customerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(customerEmail))) {
     return res.status(400).json({ error: 'Gmail không đúng định dạng' });
   }
   if (!Array.isArray(items) || items.length === 0) {
@@ -972,7 +973,7 @@ app.post('/api/orders', async (req, res) => {
       id: await ordersStore.nextOrderId(),
       customerName,
       phone,
-      customerEmail, // MỚI: dùng để báo mã vận đơn qua Gmail khi shop gửi hàng
+      customerEmail: customerEmail ? String(customerEmail).trim() : '', // MỚI: không bắt buộc - dùng để báo mã vận đơn qua Gmail khi shop gửi hàng
       address,
       province,          // MỚI
       ward,               // MỚI
