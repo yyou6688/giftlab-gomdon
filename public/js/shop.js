@@ -1590,7 +1590,11 @@ async function submitOrder(){
 const POLICY_ORDER = ['about', 'terms', 'shipping', 'returns', 'privacy', 'payment', 'contact'];
 function renderPolicySection(){
   const wrap = document.getElementById('policySection');
-  if(!wrap || !policiesContent) return;
+  if(!wrap) return;
+  // BẢN GOM ĐƠN: ẩn hẳn khối Chính sách trên trang chủ khách, không cần cho công cụ
+  // đặt đơn + quản lý kho vận
+  if(HOMEPAGE_LITE_MODE){ wrap.innerHTML = ''; wrap.style.display = 'none'; return; }
+  if(!policiesContent) return;
   wrap.innerHTML = `
     <h2 style="margin-bottom:14px;">Chính sách</h2>
     ${POLICY_ORDER.map((key, i) => `
