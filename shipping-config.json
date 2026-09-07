@@ -1,0 +1,23 @@
+{
+  "defaultWeightGram": 500,
+  "weightTiers": [
+    { "maxWeightGram": 500, "fee": 20000 },
+    { "maxWeightGram": 1000, "fee": 30000 },
+    { "maxWeightGram": 2000, "fee": 45000 }
+  ],
+  "extraFeePerKgAboveMax": 15000,
+  "freeshipRules": [
+    {
+      "label": "Freeship cho sản phẩm Bút dao unboxing (handmade) từ 100.000đ",
+      "category": "butdao",
+      "minOrderValue": 100000,
+      "active": true
+    },
+    {
+      "label": "Freeship toàn đơn hàng từ 500.000đ",
+      "category": "all",
+      "minOrderValue": 500000,
+      "active": true
+    }
+  ]
+}
