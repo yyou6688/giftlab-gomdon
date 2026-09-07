@@ -6,8 +6,8 @@
 // thử trên máy mà không cần thiết lập Google ngay).
 //
 // Cấu trúc 1 dòng trong sheet (theo đúng thứ tự cột):
-// ID | CustomerName | Phone | Address | Note | ItemsJSON | Total | ShippingFee | FreeshipApplied | GrandTotal | Status | Paid | TrackingCode | CreatedAt | Province | Ward | AddressDetail | TotalWeightGram | GiftWrap | GiftWrapFee
-// (2 cột MỚI ở cuối: GiftWrap, GiftWrapFee — cho tính năng gói quà lúc checkout)
+// ID | CustomerName | Phone | Address | Note | ItemsJSON | Total | ShippingFee | FreeshipApplied | GrandTotal | Status | Paid | TrackingCode | CreatedAt | Province | Ward | AddressDetail | TotalWeightGram | GiftWrap | GiftWrapFee | AddOnsJSON | AddOnsFee | DeliveredAt | MergeGroupId | MergeOrderIdsJSON | MergeShippingFee | MergeShippingPaid | CodShipping | MergeShippingCod | CustomerEmail
+// (cột MỚI nhất ở cuối: CustomerEmail — Gmail khách để báo mã vận đơn khi shop gửi hàng)
 // ============================================================
 
 const fs = require('fs');
@@ -47,9 +47,9 @@ async function getSheetsClient() {
   return sheetsClient;
 }
 
-// MỚI: mở rộng từ A:V (22 cột) sang A:W (23 cột) để chứa cột DeliveredAt (thời điểm
-// đơn được đánh dấu "Đã giao" - dùng để tự động chuyển sang "Hoàn thành" sau 2 ngày)
-const SHEET_RANGE = 'Orders!A:AD';
+// MỚI: mở rộng từ A:AD (30 cột) sang A:AE (31 cột) để chứa Source
+// (nguồn tạo đơn: "website" = khách tự đặt trên web, "tach-don" = đẩy từ công cụ tách đơn Messenger)
+const SHEET_RANGE = 'Orders!A:AE';
 
 function rowToOrder(row) {
   return {
@@ -76,15 +76,14 @@ function rowToOrder(row) {
     addOns: row[20] ? JSON.parse(row[20]) : [],
     addOnsFee: Number(row[21]) || 0,
     deliveredAt: row[22] || '', // MỚI: thời điểm đơn được đánh dấu "Đã giao"
-    // MỚI: thứ tự cột dưới đây khớp đúng với cột ĐÃ CÓ SẴN trong Google Sheet (X→AD),
-    // không theo thứ tự code viết trước - để không phải sắp xếp lại sheet
-    mergeGroupId: row[23] ? Number(row[23]) : null, // cột X
-    mergeOrderIds: row[24] ? JSON.parse(row[24]) : [], // cột Y
-    mergeShippingFee: row[25] !== undefined && row[25] !== '' ? Number(row[25]) : null, // cột Z
-    mergeShippingPaid: row[26] === 'TRUE' || row[26] === true, // cột AA
-    codShipping: row[27] === 'TRUE' || row[27] === true, // cột AB
-    mergeShippingCod: row[28] === 'TRUE' || row[28] === true, // cột AC
-    email: row[29] || '', // cột AD (CustomerEmail) - email khách, không bắt buộc
+    mergeGroupId: row[23] ? Number(row[23]) : null, // MỚI: gộp đơn
+    mergeOrderIds: row[24] ? JSON.parse(row[24]) : [],
+    mergeShippingFee: row[25] !== undefined && row[25] !== '' ? Number(row[25]) : null,
+    mergeShippingPaid: row[26] === 'TRUE' || row[26] === true,
+    codShipping: row[27] === 'TRUE' || row[27] === true, // MỚI: đơn lẻ chọn trả ship khi nhận hàng
+    mergeShippingCod: row[28] === 'TRUE' || row[28] === true, // MỚI: nhóm gộp chọn trả ship khi nhận hàng
+    customerEmail: row[29] || '', // MỚI: Gmail khách để báo mã vận đơn
+    source: row[30] || 'website', // MỚI: "website" (khách tự đặt) hoặc "tach-don" (đẩy từ công cụ tách đơn)
   };
 }
 function orderToRow(o) {
@@ -107,13 +106,14 @@ function orderToRow(o) {
     JSON.stringify(o.addOns || []),
     o.addOnsFee || 0,
     o.deliveredAt || '', // MỚI
-    o.mergeGroupId != null ? o.mergeGroupId : '', // cột X
-    o.mergeOrderIds && o.mergeOrderIds.length ? JSON.stringify(o.mergeOrderIds) : '', // cột Y
-    o.mergeShippingFee != null ? o.mergeShippingFee : '', // cột Z
-    o.mergeShippingPaid ? 'TRUE' : 'FALSE', // cột AA
-    o.codShipping ? 'TRUE' : 'FALSE', // cột AB
-    o.mergeShippingCod ? 'TRUE' : 'FALSE', // cột AC
-    o.email || '' // cột AD (CustomerEmail)
+    o.mergeGroupId != null ? o.mergeGroupId : '', // MỚI: gộp đơn
+    o.mergeOrderIds && o.mergeOrderIds.length ? JSON.stringify(o.mergeOrderIds) : '',
+    o.mergeShippingFee != null ? o.mergeShippingFee : '',
+    o.mergeShippingPaid ? 'TRUE' : 'FALSE',
+    o.codShipping ? 'TRUE' : 'FALSE',
+    o.mergeShippingCod ? 'TRUE' : 'FALSE',
+    o.customerEmail || '', // MỚI
+    o.source || 'website' // MỚI
   ];
 }
 
@@ -168,7 +168,7 @@ async function sheetAppendOrder(order) {
   const nextRowNumber = rows.length + 1; // dòng 1 là tiêu đề, nên dòng trống tiếp theo = tổng số dòng hiện có + 1
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Orders!A${nextRowNumber}:AD${nextRowNumber}`,
+    range: `Orders!A${nextRowNumber}:AE${nextRowNumber}`,
     valueInputOption: 'RAW',
     requestBody: { values: [orderToRow(order)] }
   });
@@ -184,7 +184,7 @@ async function sheetUpdateOrder(id, patch) {
   const sheetRowNumber = rowIndex + 1; // Sheets đánh số dòng bắt đầu từ 1
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Orders!A${sheetRowNumber}:AD${sheetRowNumber}`, // MỚI: A:V thay vì A:T
+    range: `Orders!A${sheetRowNumber}:AE${sheetRowNumber}`,
     valueInputOption: 'RAW',
     requestBody: { values: [orderToRow(updated)] }
   });
@@ -201,7 +201,7 @@ async function sheetDeleteOrder(id) {
   const sheetRowNumber = rowIndex + 1;
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SHEET_ID,
-    range: `Orders!A${sheetRowNumber}:AD${sheetRowNumber}`,
+    range: `Orders!A${sheetRowNumber}:AE${sheetRowNumber}`,
   });
   return true;
 }
