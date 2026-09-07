@@ -549,6 +549,7 @@ function renderProducts(){
         <div class="form-field">
           <label>Danh mục</label>
           <select id="np-cat">
+            <option value="">-- Chưa chọn (tự xếp vào "Phụ kiện khác") --</option>
             ${categories.map(c => `<option value="${c.key}">${escapeHtml(c.label)}</option>`).join('')}
           </select>
         </div>
