@@ -7,10 +7,12 @@ let orders = [];
 let products = [];
 let productSearch = '';
 let expandedProductId = null;
+let expandedShareId = null; // MỚI: sản phẩm đang mở khung "Chia sẻ đợt gom" (link + mã QR)
 let productPage = 1;               // MỚI: phân trang sản phẩm
 const PRODUCTS_PER_PAGE = 60;
 let orderPhoneFilter = '';         // MỚI: lọc đơn hàng theo SĐT
 let orderStatusFilter = 'all';     // MỚI: lọc đơn hàng theo trạng thái
+let orderSourceFilter = 'all';     // MỚI: lọc đơn hàng theo nguồn (website / tách đơn Messenger)
 let selectedOrderIds = new Set();  // MỚI: các đơn đang được tick chọn
 // MỚI: cấu hình ship đang chỉnh trong tab Vận chuyển
 let shippingConfig = null;
@@ -27,6 +29,8 @@ let categoryProductViewFilter = 'all'; // MỚI: 'all' = xem tất cả sản ph
 let categoryProductPage = 1;       // MỚI: phân trang trong khu quản lý sản phẩm theo danh mục
 let featuredProductSearch = '';    // MỚI: tìm sản phẩm để thêm vào "Sản phẩm nổi bật" trang chủ
 let selectedCategoryProductIds = new Set(); // MỚI: sản phẩm đang tick chọn trong khu quản lý danh mục
+let selectedProductIds = new Set();  // MỚI: sản phẩm đang tick chọn trong danh sách chính (để ẩn/xoá/sửa hàng loạt)
+let bulkEditPriceMode = 'set';       // MỚI: 'set' = đặt giá cố định, 'pct' = tăng/giảm theo %
 
 // ---------- MỚI: Khuyến mãi ----------
 let promotions = [];               // toàn bộ chương trình khuyến mãi (admin quản lý)
@@ -162,11 +166,12 @@ function renderOrders(){
     return;
   }
 
-  // MỚI: lọc theo SĐT (chứa chuỗi nhập) và theo trạng thái
+  // MỚI: lọc theo SĐT (chứa chuỗi nhập), theo trạng thái và theo nguồn tạo đơn
   const filtered = orders.filter(o => {
     const matchPhone = !orderPhoneFilter.trim() || String(o.phone).includes(orderPhoneFilter.trim());
     const matchStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
-    return matchPhone && matchStatus;
+    const matchSource = orderSourceFilter === 'all' || (o.source || 'website') === orderSourceFilter;
+    return matchPhone && matchStatus && matchSource;
   });
 
   // MỚI: bỏ chọn những đơn không còn hiện trong danh sách đã lọc (tránh chọn "ẩn")
@@ -183,6 +188,13 @@ function renderOrders(){
         <select style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);" onchange="orderStatusFilter=this.value; renderOrders();">
           <option value="all" ${orderStatusFilter==='all'?'selected':''}>Tất cả trạng thái</option>
           ${Object.entries(STATUS_LABEL).map(([k,v]) => `<option value="${k}" ${orderStatusFilter===k?'selected':''}>${v}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <select style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);" onchange="orderSourceFilter=this.value; renderOrders();">
+          <option value="all" ${orderSourceFilter==='all'?'selected':''}>Tất cả nguồn đơn</option>
+          <option value="website" ${orderSourceFilter==='website'?'selected':''}>Khách tự đặt trên web</option>
+          <option value="tach-don" ${orderSourceFilter==='tach-don'?'selected':''}>Tách đơn (Messenger)</option>
         </select>
       </div>
     </div>
@@ -217,13 +229,13 @@ function renderOrders(){
           <b>${escapeHtml(o.customerName)}</b>
         </label>
         <div style="display:flex; gap:6px;">
+          ${(o.source === 'tach-don') ? `<span class="badge" style="background:#EDE6D6; color:#565F52;">Tách đơn</span>` : ''}
           <span class="badge ${o.paid ? 'paid' : 'unpaid'}">${o.paid ? 'Đã thanh toán' : 'Chưa thanh toán'}</span>
           <span class="badge ${o.status}">${STATUS_LABEL[o.status]}</span>
         </div>
       </div>
       <div class="order-meta">
         ${escapeHtml(o.phone)} · ${escapeHtml(o.address)}
-        ${o.email ? ` · ✉️ ${escapeHtml(o.email)}` : ''}
         ${!o.trackingCode ? `<button onclick="toggleAddressEdit(${o.id})" style="font-size:11px; padding:3px 8px; margin-left:6px;">${expandedAddressEditId===o.id ? 'Đóng' : 'Sửa địa chỉ'}</button>` : ' <span style="color:var(--ink-soft);">(đã có mã vận đơn, không sửa được)</span>'}
         <br>
         ${new Date(o.createdAt).toLocaleString('vi-VN')}
@@ -419,6 +431,16 @@ function exportSpxExcel(){
   validOrders.forEach(o => {
     // Cân nặng: lấy tổng cân nặng đã tính lúc đặt hàng; đơn rất cũ chưa có thì tạm dùng 0.5kg
     const weightKg = o.totalWeightGram ? Math.round((o.totalWeightGram / 1000) * 100) / 100 : 0.5;
+    // MỚI: nếu khách chọn trả phí ship khi nhận hàng, báo SPX thu hộ đúng số tiền đó.
+    // Với đơn đã gộp, chỉ báo COD trên đúng 1 đơn đại diện (id nhỏ nhất trong nhóm =
+    // đơn được ship gộp cùng gói hàng), tránh báo trùng nhiều lần cho cùng 1 gói.
+    let codAmount = 0;
+    if (o.mergeGroupId) {
+      if (o.mergeShippingCod && o.id === o.mergeGroupId) codAmount = o.mergeShippingFee || 0;
+    } else if (o.codShipping) {
+      codAmount = o.shippingFee || 0;
+    }
+    const hasCod = codAmount > 0;
     (o.items || []).forEach((item, idx) => {
       const productName = item.name + (item.variantName ? ' - ' + item.variantName : '');
       if (idx === 0) {
@@ -429,7 +451,7 @@ function exportSpxExcel(){
           weightKg, '', '', '',
           '', o.total, 'N', 'N',
           'N', '', '',
-          'N', '', 'N', 'Người gửi trả',
+          hasCod ? 'Y' : 'N', hasCod ? codAmount : '', 'N', 'Người gửi trả',
           '', '', ''
         ]);
       } else {
@@ -467,16 +489,16 @@ async function updatePaid(id, paid){
   const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ paid }) });
   if(res.ok){ await tryLoadOrders(); } else { alert('Không cập nhật được.'); }
 }
+// MỚI: đánh dấu đã thu phí ship gộp - server tự đồng bộ cho mọi đơn khác cùng nhóm
+async function updateMergeShippingPaid(id, mergeShippingPaid){
+  const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ mergeShippingPaid }) });
+  if(res.ok){ await tryLoadOrders(); } else { alert('Không cập nhật được.'); }
+}
 async function updateTracking(id){
   const input = document.getElementById(`tracking-${id}`);
   const trackingCode = input.value.trim();
   const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ trackingCode }) });
   if(res.ok){ await tryLoadOrders(); } else { alert('Không lưu được mã vận đơn.'); }
-}
-// MỚI: tick "đã thu phí ship gộp" - server tự đồng bộ sang mọi đơn cùng nhóm gộp
-async function updateMergeShippingPaid(id, checked){
-  const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ mergeShippingPaid: checked }) });
-  if(res.ok){ await tryLoadOrders(); } else { alert('Không cập nhật được.'); }
 }
 
 // ---------- Sản phẩm ----------
@@ -521,21 +543,50 @@ function renderProducts(){
     </div>
 
     <div class="add-product-form">
-      <h3>Thêm sản phẩm mới (1 phân loại)</h3>
+      <h3>Thêm sản phẩm mới</h3>
       <div class="form-row">
         <div class="form-field"><label>Tên</label><input id="np-name" placeholder="Móc khóa mèo mini"></div>
-      </div>
-      <div class="form-row">
         <div class="form-field">
           <label>Danh mục</label>
           <select id="np-cat">
             ${categories.map(c => `<option value="${c.key}">${escapeHtml(c.label)}</option>`).join('')}
           </select>
         </div>
-        <div class="form-field"><label>Giá (đ)</label><input id="np-price" type="number" placeholder="35000"></div>
-        <div class="form-field"><label>Tồn kho</label><input id="np-stock" type="number" placeholder="10"></div>
       </div>
+      <div class="form-row">
+        <div class="form-field"><label>Link ảnh đại diện sản phẩm</label><input id="np-image" placeholder="https://..."></div>
+        <div class="form-field">
+          <label>Hoặc tải ảnh từ máy lên</label>
+          <input type="file" accept="image/*" onchange="uploadToTarget(this, 'np-image')">
+        </div>
+      </div>
+      <div class="form-field">
+        <label>Mô tả sản phẩm</label>
+        <textarea id="np-desc" rows="3" placeholder="Mô tả ngắn về sản phẩm..."></textarea>
+      </div>
+
+      <h4 style="margin:16px 0 8px;">Phân loại (SKU)</h4>
+      <div style="background:#FAFAFC; border:1px dashed var(--line); border-radius:10px; padding:10px 12px; margin-bottom:10px;">
+        <p style="font-size:12px; color:var(--ink-soft); margin:0 0 8px;">Áp dụng cho tất cả phân loại bên dưới — để trống ô nào thì giữ nguyên giá trị riêng</p>
+        <div class="form-row">
+          <div class="form-field"><input id="np-bulk-stock" type="number" placeholder="Số lượng"></div>
+          <div class="form-field"><input id="np-bulk-price" type="number" placeholder="Giá (đ)"></div>
+          <div class="form-field"><input id="np-bulk-weight" type="number" placeholder="Cân nặng (g)"></div>
+          <button onclick="applyBulkToNewProductSkus()">Áp dụng cho tất cả</button>
+        </div>
+      </div>
+      <div id="newProductSkuList"></div>
+      <button onclick="addNewProductSku()" style="margin-top:6px;">+ Thêm phân loại</button>
+
+      <h4 style="margin:16px 0 8px;">Ảnh mô tả thêm (hiện trong phần mô tả sản phẩm)</h4>
+      <div id="newProductImageList" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+      <button onclick="addNewProductImage()" style="margin-top:8px;">+ Thêm ảnh</button>
+
+      <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin:16px 0;">
+        <input type="checkbox" id="np-hidden"> Ẩn sản phẩm này trên trang chủ (chưa muốn bán ngay)
+      </label>
       <button onclick="addProduct()" style="background:var(--sage-deep); color:#fff; border:none; padding:10px 18px; border-radius:10px; font-weight:600; cursor:pointer;">Thêm sản phẩm</button>
+      <p id="addProductMsg" style="font-size:13px; margin-top:8px; color:#B23A3A;"></p>
     </div>
     <div class="form-row" style="margin-bottom:14px;">
       <div class="form-field">
@@ -564,7 +615,124 @@ function renderProducts(){
     </div>
     <div id="productList"></div>
   `;
+  newProductSkus = [{ id: 1, name: '', image: '', stock: '', price: '', weight: '' }];
+  newProductNextSkuId = 2;
+  newProductImages = [];
+  newProductNextImageId = 1;
+  renderNewProductSkus();
+  renderNewProductImages();
   renderProductList();
+}
+
+// ---------- MỚI: form "Thêm sản phẩm mới" - nhiều phân loại (SKU) + nhiều ảnh mô tả ----------
+let newProductSkus = [];
+let newProductNextSkuId = 1;
+let newProductImages = [];
+let newProductNextImageId = 1;
+
+function renderNewProductSkus(){
+  const wrap = document.getElementById('newProductSkuList');
+  if(!wrap) return;
+  wrap.innerHTML = newProductSkus.map((s, idx) => `
+    <div style="background:#FAFAFC; border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px;" data-sku-id="${s.id}">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+        <span style="font-size:12px; color:var(--ink-soft);">Phân loại ${idx + 1}</span>
+        ${newProductSkus.length > 1 ? `<button onclick="removeNewProductSku(${s.id})" style="font-size:11px; padding:3px 8px;">Xoá</button>` : ''}
+      </div>
+      <div class="form-row">
+        <div class="form-field"><input class="sku-name" placeholder="Tên phân loại (VD: Màu đỏ)" value="${escapeHtml(s.name)}" oninput="newProductSkus.find(x=>x.id===${s.id}).name=this.value"></div>
+        <div class="form-field"><input class="sku-image" placeholder="Link ảnh phân loại" value="${escapeHtml(s.image)}" oninput="newProductSkus.find(x=>x.id===${s.id}).image=this.value"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><input class="sku-stock" type="number" placeholder="Số lượng" value="${s.stock}" oninput="newProductSkus.find(x=>x.id===${s.id}).stock=this.value"></div>
+        <div class="form-field"><input class="sku-price" type="number" placeholder="Giá (đ)" value="${s.price}" oninput="newProductSkus.find(x=>x.id===${s.id}).price=this.value"></div>
+        <div class="form-field"><input class="sku-weight" type="number" placeholder="Cân nặng (g)" value="${s.weight}" oninput="newProductSkus.find(x=>x.id===${s.id}).weight=this.value"></div>
+        <div class="form-field"><input type="file" accept="image/*" onchange="uploadToNewProductSku(this, ${s.id})"></div>
+      </div>
+    </div>
+  `).join('');
+}
+function addNewProductSku(){
+  newProductSkus.push({ id: newProductNextSkuId++, name: '', image: '', stock: '', price: '', weight: '' });
+  renderNewProductSkus();
+}
+function removeNewProductSku(id){
+  newProductSkus = newProductSkus.filter(s => s.id !== id);
+  renderNewProductSkus();
+}
+function applyBulkToNewProductSkus(){
+  const stock = document.getElementById('np-bulk-stock').value;
+  const price = document.getElementById('np-bulk-price').value;
+  const weight = document.getElementById('np-bulk-weight').value;
+  newProductSkus.forEach(s => {
+    if(stock !== '') s.stock = stock;
+    if(price !== '') s.price = price;
+    if(weight !== '') s.weight = weight;
+  });
+  renderNewProductSkus();
+}
+async function uploadToNewProductSku(fileInput, id){
+  const file = fileInput.files[0];
+  if(!file) return;
+  const formData = new FormData();
+  formData.append('image', file);
+  try{
+    const res = await fetch('/api/upload-image', { method: 'POST', headers: { 'x-admin-key': adminKey }, body: formData });
+    if(!res.ok) return;
+    const data = await res.json();
+    newProductSkus.find(s => s.id === id).image = data.url;
+    renderNewProductSkus();
+  } catch(e){ /* im lặng bỏ qua, admin có thể dán link thủ công */ }
+}
+
+function renderNewProductImages(){
+  const wrap = document.getElementById('newProductImageList');
+  if(!wrap) return;
+  wrap.innerHTML = newProductImages.map((img, idx) => `
+    <div style="width:160px; background:#FAFAFC; border:1px solid var(--line); border-radius:10px; padding:8px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+        <span style="font-size:11px; color:var(--ink-soft);">Ảnh ${idx + 1}</span>
+        <button onclick="removeNewProductImage(${img.id})" style="font-size:11px; padding:2px 6px;">Xoá</button>
+      </div>
+      <input placeholder="Link ảnh" value="${escapeHtml(img.url)}" style="width:100%; font-size:12px; margin-bottom:6px;" oninput="newProductImages.find(x=>x.id===${img.id}).url=this.value">
+      <input type="file" accept="image/*" style="width:100%; font-size:11px;" onchange="uploadToNewProductImage(this, ${img.id})">
+    </div>
+  `).join('') || '<p style="font-size:12px; color:var(--ink-soft);">Chưa có ảnh mô tả nào.</p>';
+}
+function addNewProductImage(){
+  newProductImages.push({ id: newProductNextImageId++, url: '' });
+  renderNewProductImages();
+}
+function removeNewProductImage(id){
+  newProductImages = newProductImages.filter(i => i.id !== id);
+  renderNewProductImages();
+}
+async function uploadToNewProductImage(fileInput, id){
+  const file = fileInput.files[0];
+  if(!file) return;
+  const formData = new FormData();
+  formData.append('image', file);
+  try{
+    const res = await fetch('/api/upload-image', { method: 'POST', headers: { 'x-admin-key': adminKey }, body: formData });
+    if(!res.ok) return;
+    const data = await res.json();
+    newProductImages.find(i => i.id === id).url = data.url;
+    renderNewProductImages();
+  } catch(e){ /* im lặng bỏ qua, admin có thể dán link thủ công */ }
+}
+
+// Dùng chung cho "Link ảnh đại diện sản phẩm": tải ảnh lên rồi điền thẳng vào ô input đích
+async function uploadToTarget(fileInput, targetInputId){
+  const file = fileInput.files[0];
+  if(!file) return;
+  const formData = new FormData();
+  formData.append('image', file);
+  try{
+    const res = await fetch('/api/upload-image', { method: 'POST', headers: { 'x-admin-key': adminKey }, body: formData });
+    if(!res.ok) return;
+    const data = await res.json();
+    document.getElementById(targetInputId).value = data.url;
+  } catch(e){ /* im lặng bỏ qua, admin có thể dán link thủ công */ }
 }
 
 // MỚI: danh sách danh mục hiện có + số sản phẩm mỗi danh mục + nút xoá
@@ -941,6 +1109,87 @@ async function hideOutOfStockProducts(){
   }
 }
 
+// ---------- MỚI: chọn tất cả/bỏ chọn/từng sản phẩm + sửa/ẩn/xoá hàng loạt ----------
+function toggleSelectProduct(id, checked){
+  if(checked) selectedProductIds.add(id); else selectedProductIds.delete(id);
+  renderProductList();
+}
+function toggleSelectAllProducts(checked){
+  const q = productSearch.trim().toLowerCase();
+  const list = products.filter(p =>
+    (!q || p.name.toLowerCase().includes(q)) &&
+    (productCategoryFilter === 'all' || p.category === productCategoryFilter) &&
+    (productStatusFilter === 'all'
+      || (productStatusFilter === 'visible' && !p.hidden)
+      || (productStatusFilter === 'hidden' && p.hidden)
+      || (productStatusFilter === 'instock' && p.totalStock > 0)
+      || (productStatusFilter === 'outofstock' && p.totalStock <= 0))
+  );
+  if(checked){ list.forEach(p => selectedProductIds.add(p.id)); }
+  else { list.forEach(p => selectedProductIds.delete(p.id)); }
+  renderProductList();
+}
+function clearSelectedProducts(){
+  selectedProductIds = new Set();
+  renderProductList();
+}
+
+function renderBulkEditPanel(){
+  return `
+    <div style="background:#FAFAFC; border:1px dashed var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
+      <p style="font-size:12px; color:var(--ink-soft); margin:0 0 8px;">Áp dụng cho toàn bộ phân loại (SKU) của các sản phẩm đã chọn — để trống ô nào thì giữ nguyên giá trị hiện tại</p>
+      <div class="form-row">
+        <div class="form-field"><input id="bulkEditStock" type="number" placeholder="Số lượng"></div>
+        <div class="form-field"><input id="bulkEditWeight" type="number" placeholder="Cân nặng (g)"></div>
+        <div class="form-field">
+          <select id="bulkEditPriceMode" onchange="bulkEditPriceMode=this.value">
+            <option value="set" ${bulkEditPriceMode==='set'?'selected':''}>Đặt giá cố định</option>
+            <option value="pct" ${bulkEditPriceMode==='pct'?'selected':''}>Tăng/giảm theo %</option>
+          </select>
+        </div>
+        <div class="form-field"><input id="bulkEditPriceValue" type="number" placeholder="VD: 45000 hoặc -10"></div>
+      </div>
+      <button onclick="applyBulkEditProducts()" style="background:var(--sage-deep); color:#fff; border:none; padding:8px 16px; border-radius:8px; font-weight:600; cursor:pointer;">Áp dụng cho các sản phẩm đã chọn</button>
+      <p id="bulkEditMsg" style="font-size:13px; margin-top:8px; color:var(--sage-deep);"></p>
+    </div>
+  `;
+}
+
+async function applyBulkEditProducts(){
+  const stock = document.getElementById('bulkEditStock').value;
+  const weight = document.getElementById('bulkEditWeight').value;
+  const priceValue = document.getElementById('bulkEditPriceValue').value;
+  const msgEl = document.getElementById('bulkEditMsg');
+  msgEl.textContent = 'Đang cập nhật...';
+  const res = await apiFetch('/api/admin/products/bulk-edit', {
+    method: 'POST',
+    body: JSON.stringify({
+      ids: Array.from(selectedProductIds),
+      stock: stock === '' ? undefined : stock,
+      weight: weight === '' ? undefined : weight,
+      priceMode: bulkEditPriceMode,
+      priceValue: priceValue === '' ? undefined : priceValue,
+    })
+  });
+  if(res.ok){
+    await loadProducts();
+  } else {
+    msgEl.textContent = 'Không sửa hàng loạt được, thử lại.';
+  }
+}
+
+async function bulkHideProducts(){
+  if(!confirm(`Ẩn ${selectedProductIds.size} sản phẩm đã chọn trên trang chủ?`)) return;
+  const res = await apiFetch('/api/admin/products/bulk-hide', { method: 'POST', body: JSON.stringify({ ids: Array.from(selectedProductIds) }) });
+  if(res.ok){ selectedProductIds = new Set(); await loadProducts(); }
+}
+
+async function bulkDeleteProducts(){
+  if(!confirm(`Xoá hẳn ${selectedProductIds.size} sản phẩm đã chọn? Không thể hoàn tác.`)) return;
+  const res = await apiFetch('/api/admin/products/bulk-delete', { method: 'POST', body: JSON.stringify({ ids: Array.from(selectedProductIds) }) });
+  if(res.ok){ selectedProductIds = new Set(); await loadProducts(); }
+}
+
 function renderProductList(){
   const q = productSearch.trim().toLowerCase();
   const list = products.filter(p =>
@@ -960,7 +1209,27 @@ function renderProductList(){
   if(productPage < 1) productPage = 1;
   const pageItems = list.slice((productPage - 1) * PRODUCTS_PER_PAGE, productPage * PRODUCTS_PER_PAGE);
 
-  wrap.innerHTML = `<p style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">${list.length} sản phẩm · Trang ${productPage}/${totalPages}</p>` +
+  // MỚI: bỏ chọn sản phẩm không còn hiện trong danh sách đã lọc
+  const filteredIds = new Set(list.map(p => p.id));
+  selectedProductIds.forEach(id => { if(!filteredIds.has(id)) selectedProductIds.delete(id); });
+  const allSelected = list.length > 0 && list.every(p => selectedProductIds.has(p.id));
+
+  const bulkBar = `
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600;">
+        <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="toggleSelectAllProducts(this.checked)"> Chọn tất cả (${list.length})
+      </label>
+      ${selectedProductIds.size > 0 ? `<button onclick="clearSelectedProducts()" style="font-size:12px;">Bỏ chọn tất cả</button>` : ''}
+      <span style="font-size:13px; color:var(--ink-soft);">Đã chọn: ${selectedProductIds.size}</span>
+      ${selectedProductIds.size > 0 ? `
+        <button onclick="bulkHideProducts()" style="font-size:12px;">Ẩn đã chọn</button>
+        <button class="danger" onclick="bulkDeleteProducts()" style="font-size:12px;">Xoá đã chọn</button>
+      ` : ''}
+    </div>
+    ${selectedProductIds.size > 0 ? renderBulkEditPanel() : ''}
+  `;
+
+  wrap.innerHTML = bulkBar + `<p style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">${list.length} sản phẩm · Trang ${productPage}/${totalPages}</p>` +
     pageItems.map(p => {
       const variants = (p.variants && p.variants.length) ? p.variants : [];
       const priceLabel = p.priceMin === p.priceMax ? fmt(p.priceMin) : `${fmt(p.priceMin)} - ${fmt(p.priceMax)}`;
@@ -968,6 +1237,7 @@ function renderProductList(){
       const panel = isOpen ? renderVariantPanel(p) : '';
       return `
       <div class="product-row" style="align-items:flex-start;">
+        <input type="checkbox" ${selectedProductIds.has(p.id) ? 'checked' : ''} onchange="toggleSelectProduct('${p.id}', this.checked)" style="margin-top:12px;">
         ${p.image ? `<img src="${escapeHtml(p.image)}" class="pi" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : `<div class="pi">🎁</div>`}
         <div class="pinfo">
           <b>${escapeHtml(p.name)}</b>
@@ -975,12 +1245,77 @@ function renderProductList(){
         </div>
         <div style="display:flex; flex-direction:column; gap:6px;">
           <button onclick="toggleVariantPanel('${p.id}')">${isOpen ? 'Đóng' : 'Sửa giá/kho/ảnh'}</button>
+          <button onclick="toggleSharePanel('${p.id}')">${expandedShareId === p.id ? 'Đóng chia sẻ' : '🔗 Chia sẻ'}</button>
           <button class="danger" onclick="deleteProduct('${p.id}')">Xóa</button>
         </div>
       </div>
       ${panel}
+      ${expandedShareId === p.id ? renderSharePanel(p) : ''}
     `;
     }).join('') + renderPager(totalPages);
+
+  // MỚI: vẽ mã QR sau khi HTML đã chèn vào trang (canvas phải tồn tại trước)
+  if(expandedShareId){
+    const shared = list.find(p => p.id === expandedShareId);
+    if(shared) drawShareQr(shared.id);
+  }
+}
+
+// MỚI: mở/đóng khung "Chia sẻ đợt gom" (link trực tiếp tới sản phẩm + mã QR để
+// đăng lên Threads/FB/TikTok, tránh nền tảng hạn chế hiển thị link ngoài)
+function toggleSharePanel(id){
+  expandedShareId = (expandedShareId === id) ? null : id;
+  renderProductList();
+}
+
+function renderSharePanel(p){
+  const link = `${window.location.origin}/?p=${encodeURIComponent(p.id)}`;
+  return `
+    <div style="background:#FAFAFC; border:1px dashed var(--line); border-radius:10px; padding:14px; margin:6px 0 10px;">
+      <p style="font-size:13px; font-weight:600; margin:0 0 10px;">Chia sẻ đợt gom: ${escapeHtml(p.name)}</p>
+      <div style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
+        <input id="share-link-${p.id}" readonly value="${escapeHtml(link)}" style="flex:1; min-width:220px; font-size:12px;">
+        <button onclick="copyShareLink('${p.id}')" id="share-copy-btn-${p.id}">Sao chép link</button>
+      </div>
+      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+        <div style="background:#fff; padding:8px; border-radius:8px; border:1px solid var(--line);">
+          <canvas id="share-qr-${p.id}" width="140" height="140"></canvas>
+        </div>
+        <div style="flex:1; min-width:180px; display:flex; flex-direction:column; gap:8px;">
+          <button onclick="downloadShareQr('${p.id}')">📥 Tải mã QR</button>
+          <p style="font-size:12px; color:var(--ink-soft); margin:0;">Dùng ảnh QR khi đăng Threads/TikTok để tránh bị hạn chế hiển thị link. Khách quét mã hoặc bấm link đều mở thẳng đúng sản phẩm này.</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function drawShareQr(id){
+  const canvas = document.getElementById(`share-qr-${id}`);
+  const input = document.getElementById(`share-link-${id}`);
+  if(!canvas || !input || typeof QRious === 'undefined') return;
+  new QRious({ element: canvas, value: input.value, size: 140, background: '#ffffff', foreground: '#3C3489' });
+}
+
+function copyShareLink(id){
+  const input = document.getElementById(`share-link-${id}`);
+  if(!input) return;
+  navigator.clipboard.writeText(input.value).then(() => {
+    const btn = document.getElementById(`share-copy-btn-${id}`);
+    if(!btn) return;
+    const old = btn.textContent;
+    btn.textContent = 'Đã sao chép';
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  });
+}
+
+function downloadShareQr(id){
+  const canvas = document.getElementById(`share-qr-${id}`);
+  if(!canvas) return;
+  const a = document.createElement('a');
+  a.href = canvas.toDataURL('image/png');
+  a.download = `qr-gom-don-${id}.png`;
+  a.click();
 }
 
 // MỚI: thanh phân trang cho danh sách sản phẩm
@@ -1157,13 +1492,37 @@ async function saveVariant(id, idx){
 }
 
 async function addProduct(){
+  const msgEl = document.getElementById('addProductMsg');
   const name = document.getElementById('np-name').value.trim();
   const category = document.getElementById('np-cat').value;
-  const price = document.getElementById('np-price').value;
-  const stock = document.getElementById('np-stock').value;
-  if(!name || !price){ alert('Nhập ít nhất tên và giá sản phẩm.'); return; }
-  const res = await apiFetch('/api/products', { method: 'POST', body: JSON.stringify({ name, category, price, stock }) });
-  if(res.ok){ await loadProducts(); } else { alert('Không thêm được sản phẩm.'); }
+  const image = document.getElementById('np-image').value.trim();
+  const description = document.getElementById('np-desc').value.trim();
+  const hidden = document.getElementById('np-hidden').checked;
+
+  const variants = newProductSkus.map(s => ({
+    name: s.name.trim() || null,
+    price: Number(s.price) || 0,
+    stock: Number(s.stock) || 0,
+    image: s.image.trim(),
+    weight: s.weight === '' ? null : Number(s.weight)
+  }));
+  const detailImages = newProductImages.map(i => i.url.trim()).filter(Boolean);
+
+  if(!name){ msgEl.textContent = 'Nhập tên sản phẩm.'; return; }
+  if(!variants.some(v => v.price > 0)){ msgEl.textContent = 'Nhập giá cho ít nhất 1 phân loại.'; return; }
+
+  msgEl.textContent = 'Đang thêm...';
+  const res = await apiFetch('/api/products', {
+    method: 'POST',
+    body: JSON.stringify({ name, category, image, description, variants, detailImages, hidden })
+  });
+  if(res.ok){
+    msgEl.textContent = '';
+    await loadProducts();
+  } else {
+    const err = await res.json().catch(() => ({}));
+    msgEl.textContent = err.error || 'Không thêm được sản phẩm.';
+  }
 }
 
 async function deleteProduct(id){
