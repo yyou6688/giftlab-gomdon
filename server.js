@@ -220,9 +220,11 @@ app.get('/api/products', async (req, res) => {
 // phân loại có tên/ảnh/số lượng/giá/cân nặng riêng), mô tả, nhiều ảnh mô tả, ẩn/hiện.
 // Vẫn nhận được price/stock kiểu cũ (1 phân loại) để không hỏng nơi nào còn gọi kiểu cũ.
 app.post('/api/products', requireAdmin, async (req, res) => {
-  const { name, category, image, description, variants, detailImages, hidden, price, stock } = req.body;
-  if (!name || !category) {
-    return res.status(400).json({ error: 'Thiếu tên hoặc danh mục' });
+  const { name, image, description, variants, detailImages, hidden, price, stock } = req.body;
+  // MỚI: không bắt buộc chọn danh mục nữa - để trống thì tự xếp vào "khac" (Phụ kiện khác)
+  const category = req.body.category || 'khac';
+  if (!name) {
+    return res.status(400).json({ error: 'Thiếu tên sản phẩm' });
   }
   try {
     const products = await productsStore.listProducts();
