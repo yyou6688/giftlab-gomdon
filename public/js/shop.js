@@ -270,10 +270,11 @@ function renderCollections(){
     : [];
   if(items.length === 0){ wrap.innerHTML = ''; wrap.style.display = 'none'; return; }
   wrap.style.display = 'grid';
-  // MỚI: tự tính số cột = làm tròn lên (số mục / 2), để dù có bao nhiêu danh mục cũng
-  // luôn gói gọn trong TỐI ĐA 2 DÒNG, không cần cuộn ngang (áp dụng cho mọi kích thước
-  // màn hình - CSS tự co giãn độ rộng từng ô theo số cột này)
-  const cols = Math.max(1, Math.ceil(items.length / 2));
+  // MỚI: giới hạn số cột tối đa theo kích thước màn hình (điện thoại tối đa 3, tablet
+  // tối đa 5, máy tính giữ mức rộng rãi như cũ) - để ảnh không bị co nhỏ dần khi có
+  // nhiều danh mục; vượt quá số cột tối đa thì tự xuống thêm dòng thay vì thu nhỏ mãi
+  const maxCols = window.innerWidth < 640 ? 3 : (window.innerWidth < 1024 ? 5 : 8);
+  const cols = Math.min(maxCols, Math.max(1, Math.ceil(items.length / 2)));
   wrap.style.setProperty('--collections-cols', cols);
   wrap.innerHTML = items.map(c => `
     <div class="collection-tile" onclick="filterByCategory('${c.category || 'all'}')" style="cursor:pointer;">
@@ -282,6 +283,13 @@ function renderCollections(){
     </div>
   `).join('');
 }
+
+// MỚI: tính lại số cột khi xoay ngang/dọc điện thoại hoặc kéo giãn cửa sổ trình duyệt
+let collectionsResizeTimeout = null;
+window.addEventListener('resize', () => {
+  clearTimeout(collectionsResizeTimeout);
+  collectionsResizeTimeout = setTimeout(renderCollections, 200);
+});
 
 // MỚI: lọc theo danh mục khi bấm vào 1 ảnh bộ sưu tập, tự cuộn xuống khu vực sản phẩm
 function filterByCategory(cat){
