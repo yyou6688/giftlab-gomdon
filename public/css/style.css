@@ -426,15 +426,9 @@ footer p{ font-size:13px; color:var(--ink-soft); margin-top:6px; }
 .qr-note b{ color: var(--ink); }
 
 @media (min-width: 640px) and (max-width: 1023px){
-  .grid{ grid-template-columns: repeat(4, 1fr); max-width:600px; margin:0 auto; }
+  .grid{ grid-template-columns: repeat(5, 1fr); max-width:820px; margin:0 auto; }
   .hero, .topbar, .chips, .section-head, .trust{ max-width:600px; margin-left:auto; margin-right:auto; }
   .float-bar, .drawer{ max-width:600px; margin:0 auto; left:0; right:0; }
-}
-
-/* MỚI: từ 900px trở lên (tablet ngang trở lên, trước khi vào layout desktop ở 1024px)
-   - lưới lên 5 sản phẩm/dòng, nới rộng max-width để đủ chỗ */
-@media (min-width: 900px) and (max-width: 1023px){
-  .grid{ grid-template-columns: repeat(5, 1fr); max-width:820px; }
 }
 
 /* ============================================================
