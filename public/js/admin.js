@@ -1452,6 +1452,10 @@ function renderVariantPanel(p){
   const descPanel = `
     <div class="product-desc-edit">
       <div class="form-field">
+        <label>Tên sản phẩm</label>
+        <input type="text" id="name-${p.id}" value="${escapeHtml(p.name || '')}">
+      </div>
+      <div class="form-field">
         <label>Ảnh đại diện sản phẩm (hiển thị ở trang chủ và danh sách sản phẩm)</label>
         <div style="display:flex; gap:10px; align-items:flex-start; margin-bottom:8px;">
           <img id="cover-preview-${p.id}" src="${escapeHtml(p.image || '')}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
@@ -1485,7 +1489,7 @@ function renderVariantPanel(p){
         <label>Ảnh mô tả chi tiết (tối đa 9 ảnh, để trống ô nào thì ô đó không hiện)</label>
         <div class="detail-img-grid">${detailImgSlots}</div>
       </div>
-      <button onclick="saveProductDetail('${p.id}')">Lưu danh mục, mô tả, ảnh đại diện & ảnh chi tiết</button>
+      <button onclick="saveProductDetail('${p.id}')">Lưu tên, danh mục, mô tả, ảnh đại diện & ảnh chi tiết</button>
     </div>
   `;
 
@@ -1568,6 +1572,8 @@ async function uploadCoverImage(id){
 async function saveProductDetail(id){
   const p = getProductById(id);
   if(!p) return;
+  const name = document.getElementById(`name-${id}`).value.trim();
+  if(!name){ alert('Tên sản phẩm không được để trống.'); return; }
   const category = document.getElementById(`cat-${id}`).value;
   const hidden = document.getElementById(`hidden-${id}`).checked;
   const description = document.getElementById(`desc-${id}`).value;
@@ -1575,7 +1581,7 @@ async function saveProductDetail(id){
   const detailImages = (p.detailImages || []).filter(u => u && u.trim());
   const res = await apiFetch(`/api/products/${id}`, {
     method: 'PUT',
-    body: JSON.stringify({ category, hidden, description, image, detailImages })
+    body: JSON.stringify({ name, category, hidden, description, image, detailImages })
   });
   if(res.ok){ await loadProducts(); } else { alert('Không lưu được, thử lại.'); }
 }
