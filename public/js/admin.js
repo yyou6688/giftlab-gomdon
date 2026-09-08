@@ -1430,7 +1430,14 @@ function renderProductList(){
   // của các sản phẩm khác để tránh rối (ghim luôn quyết định vị trí đầu tiên)
   const anyPinned = products.some(pp => pp.pinned);
 
-  wrap.innerHTML = bulkBar + `<p style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">${list.length} sản phẩm · Trang ${productPage}/${totalPages}</p>` +
+  // MỚI: doanh thu tối đa nếu bán hết toàn bộ tồn kho đang có trong danh sách đang lọc
+  // (tính theo từng phân loại - giá x tồn kho riêng của phân loại đó, không dùng giá
+  // trung bình, để đúng với sản phẩm có nhiều phân loại giá khác nhau)
+  const maxRevenue = list.reduce((sum, p) => {
+    const variants = (p.variants && p.variants.length) ? p.variants : [{ price: p.priceMin, stock: p.totalStock }];
+    return sum + variants.reduce((s, v) => s + (Number(v.price) || 0) * (Number(v.stock) || 0), 0);
+  }, 0);
+  wrap.innerHTML = bulkBar + `<p style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">${list.length} sản phẩm · Trang ${productPage}/${totalPages} · Doanh thu tối đa nếu bán hết: <b style="color:var(--sage-deep);">${fmt(maxRevenue)}</b></p>` +
     pageItems.map((p, i) => {
       const variants = (p.variants && p.variants.length) ? p.variants : [];
       const priceLabel = p.priceMin === p.priceMax ? fmt(p.priceMin) : `${fmt(p.priceMin)} - ${fmt(p.priceMax)}`;
