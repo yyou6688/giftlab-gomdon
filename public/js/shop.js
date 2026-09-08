@@ -351,6 +351,10 @@ function renderGrid(){
     (activeCat==='all' || p.category===activeCat) &&
     (!siteSearchQuery || p.name.toLowerCase().includes(siteSearchQuery))
   );
+  // MỚI: sản phẩm hết hàng tự động chuyển xuống cuối lưới, không hiện xen kẽ với
+  // hàng còn bán được nữa (chỉ đổi thứ tự hiển thị cho khách, không đổi thứ tự
+  // thật đang sắp trong trang quản trị)
+  items.sort((a, b) => (a.totalStock <= 0 ? 1 : 0) - (b.totalStock <= 0 ? 1 : 0));
   // MỚI: hiện nút "Xem tất cả" khi đang lọc danh mục hoặc đang tìm kiếm
   const resetLink = document.getElementById('resetFilterLink');
   if(resetLink) resetLink.style.display = (activeCat === 'all' && !siteSearchQuery) ? 'none' : 'inline';
