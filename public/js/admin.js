@@ -1452,6 +1452,23 @@ function renderVariantPanel(p){
   const descPanel = `
     <div class="product-desc-edit">
       <div class="form-field">
+        <label>Ảnh đại diện sản phẩm (hiển thị ở trang chủ và danh sách sản phẩm)</label>
+        <div style="display:flex; gap:10px; align-items:flex-start; margin-bottom:8px;">
+          <img id="cover-preview-${p.id}" src="${escapeHtml(p.image || '')}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
+          <div style="flex:1;">
+            <input type="text" id="cover-image-${p.id}" value="${escapeHtml(p.image || '')}" placeholder="https://..." oninput="setCoverImagePreview('${p.id}', this.value)">
+            <input type="file" accept="image/*" id="cover-file-${p.id}" onchange="uploadCoverImage('${p.id}')" style="margin-top:6px;">
+            <span id="cover-upload-status-${p.id}" style="font-size:11px; color:var(--ink-soft); display:block; margin-top:4px;"></span>
+          </div>
+        </div>
+        ${variants.some(v => v.image) ? `
+          <p style="font-size:12px; color:var(--ink-soft); margin:6px 0 4px;">Hoặc dùng luôn ảnh của 1 phân loại làm ảnh đại diện:</p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            ${variants.map((v, idx) => v.image ? `<img src="${escapeHtml(v.image)}" class="variant-edit-thumb" style="cursor:pointer;" title="${escapeHtml(v.name || 'Dùng ảnh này')}" onclick="setCoverImageFromVariant('${p.id}', ${idx})">` : '').join('')}
+          </div>
+        ` : ''}
+      </div>
+      <div class="form-field">
         <label>Danh mục</label>
         <select id="cat-${p.id}">
           ${categories.map(c => `<option value="${c.key}" ${p.category===c.key?'selected':''}>${escapeHtml(c.label)}</option>`).join('')}
@@ -1468,7 +1485,7 @@ function renderVariantPanel(p){
         <label>Ảnh mô tả chi tiết (tối đa 9 ảnh, để trống ô nào thì ô đó không hiện)</label>
         <div class="detail-img-grid">${detailImgSlots}</div>
       </div>
-      <button onclick="saveProductDetail('${p.id}')">Lưu danh mục, mô tả & ảnh chi tiết</button>
+      <button onclick="saveProductDetail('${p.id}')">Lưu danh mục, mô tả, ảnh đại diện & ảnh chi tiết</button>
     </div>
   `;
 
@@ -1506,17 +1523,59 @@ async function uploadDetailImage(id, idx){
   } catch(e){ statusEl.textContent = 'Lỗi kết nối.'; }
 }
 
-// MỚI: lưu mô tả + ảnh mô tả (khác API với sửa giá/kho/cân nặng vì đây là dữ liệu chung cả sản phẩm)
+// MỚI: xem trước ảnh đại diện khi gõ/dán link
+function setCoverImagePreview(id, url){
+  const preview = document.getElementById(`cover-preview-${id}`);
+  if(preview) preview.src = url;
+}
+
+// MỚI: bấm chọn ảnh của 1 phân loại để dùng làm ảnh đại diện, không cần tải lại
+function setCoverImageFromVariant(id, idx){
+  const p = getProductById(id);
+  if(!p) return;
+  const variants = (p.variants && p.variants.length) ? p.variants : [];
+  const v = variants[idx];
+  if(!v || !v.image) return;
+  const input = document.getElementById(`cover-image-${id}`);
+  if(input) input.value = v.image;
+  setCoverImagePreview(id, v.image);
+}
+
+// MỚI: tải ảnh đại diện mới từ máy/điện thoại lên
+async function uploadCoverImage(id){
+  const fileInput = document.getElementById(`cover-file-${id}`);
+  const statusEl = document.getElementById(`cover-upload-status-${id}`);
+  const file = fileInput.files[0];
+  if(!file) return;
+  statusEl.textContent = 'Đang tải ảnh lên...';
+  const formData = new FormData();
+  formData.append('image', file);
+  try{
+    const res = await fetch('/api/upload-image', { method: 'POST', headers: { 'x-admin-key': adminKey }, body: formData });
+    if(!res.ok){
+      const err = await res.json().catch(() => ({}));
+      statusEl.textContent = err.error || 'Tải ảnh lên thất bại.';
+      return;
+    }
+    const data = await res.json();
+    document.getElementById(`cover-image-${id}`).value = data.url;
+    setCoverImagePreview(id, data.url);
+    statusEl.textContent = 'Đã tải ảnh lên xong — nhớ bấm "Lưu" bên dưới để áp dụng.';
+  } catch(e){ statusEl.textContent = 'Lỗi kết nối.'; }
+}
+
+// MỚI: lưu mô tả + ảnh đại diện + ảnh mô tả (khác API với sửa giá/kho/cân nặng vì đây là dữ liệu chung cả sản phẩm)
 async function saveProductDetail(id){
   const p = getProductById(id);
   if(!p) return;
   const category = document.getElementById(`cat-${id}`).value;
   const hidden = document.getElementById(`hidden-${id}`).checked;
   const description = document.getElementById(`desc-${id}`).value;
+  const image = document.getElementById(`cover-image-${id}`).value.trim();
   const detailImages = (p.detailImages || []).filter(u => u && u.trim());
   const res = await apiFetch(`/api/products/${id}`, {
     method: 'PUT',
-    body: JSON.stringify({ category, hidden, description, detailImages })
+    body: JSON.stringify({ category, hidden, description, image, detailImages })
   });
   if(res.ok){ await loadProducts(); } else { alert('Không lưu được, thử lại.'); }
 }
