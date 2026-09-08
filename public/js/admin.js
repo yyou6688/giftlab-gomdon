@@ -1257,6 +1257,10 @@ function renderProductList(){
       || (productStatusFilter === 'instock' && p.totalStock > 0)
       || (productStatusFilter === 'outofstock' && p.totalStock <= 0))
   );
+  // MỚI: tự động nhóm theo trạng thái - còn hàng trước, ẩn ở giữa, hết hàng dồn cuối
+  // (vẫn giữ nguyên thứ tự ghim/mũi tên đang sắp trong từng nhóm)
+  function productGroupRank(p){ return p.hidden ? 1 : (p.totalStock > 0 ? 0 : 2); }
+  list.sort((a, b) => productGroupRank(a) - productGroupRank(b));
   const wrap = document.getElementById('productList');
 
   // MỚI: phân trang - 60 sản phẩm mỗi trang
