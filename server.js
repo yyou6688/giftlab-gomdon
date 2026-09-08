@@ -545,6 +545,42 @@ app.post('/api/admin/products/bulk-hide', requireAdmin, async (req, res) => {
   }
 });
 
+// MỚI: ghim/bỏ ghim 1 sản phẩm lên đầu danh sách hiển thị (chỉ 1 sản phẩm được ghim cùng lúc)
+app.post('/api/admin/products/:id/pin', requireAdmin, async (req, res) => {
+  try {
+    const products = await productsStore.listProducts();
+    const target = products.find(p => p.id === req.params.id);
+    if (!target) return res.status(404).json({ error: 'Không tìm thấy sản phẩm' });
+    const newPinned = !target.pinned;
+    products.forEach(p => { p.pinned = (p.id === target.id) ? newPinned : false; });
+    await productsStore.saveProducts(products);
+    res.json({ success: true, pinned: newPinned });
+  } catch (err) {
+    console.error('Lỗi ghim sản phẩm:', err.message);
+    res.status(500).json({ error: 'Không ghim được sản phẩm' });
+  }
+});
+
+// MỚI: đổi vị trí hiển thị - hoán đổi "order" giữa sản phẩm và 1 sản phẩm liền kề
+// (withId do trang quản trị tính sẵn dựa trên danh sách đang lọc/xem, để mũi tên
+// lên/xuống luôn hoán đổi đúng với sản phẩm đang thấy trên màn hình)
+app.post('/api/admin/products/:id/move-swap', requireAdmin, async (req, res) => {
+  const { withId } = req.body;
+  if (!withId) return res.status(400).json({ error: 'Thiếu sản phẩm liền kề để đổi chỗ' });
+  try {
+    const products = await productsStore.listProducts();
+    const a = products.find(p => p.id === req.params.id);
+    const b = products.find(p => p.id === withId);
+    if (!a || !b) return res.status(404).json({ error: 'Không tìm thấy sản phẩm' });
+    const tmp = a.order; a.order = b.order; b.order = tmp;
+    await productsStore.saveProducts(products);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Lỗi đổi vị trí sản phẩm:', err.message);
+    res.status(500).json({ error: 'Không đổi được vị trí sản phẩm' });
+  }
+});
+
 // MỚI: xoá hàng loạt các sản phẩm đã tick chọn trong tab Sản phẩm
 app.post('/api/admin/products/bulk-delete', requireAdmin, async (req, res) => {
   const { ids } = req.body;
