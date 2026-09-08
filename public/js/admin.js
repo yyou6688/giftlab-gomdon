@@ -867,6 +867,29 @@ const CATEGORY_PRODUCTS_PER_PAGE = 20; // MỚI
 
 // MỚI: danh sách sản phẩm trong 1 danh mục, tick chọn + chuyển hàng loạt sang danh mục khác
 // (tick chọn sản phẩm rồi "chuyển tới" = vừa thêm vào danh mục đích, vừa tự động bớt khỏi danh mục này)
+// MỚI: sắp xếp lại thứ tự hiển thị thật (theo giá/tên) cho đúng nhóm sản phẩm đang lọc
+// ở khung này - chỉ đổi vị trí TRONG nhóm đang xem, không đụng tới sản phẩm ngoài nhóm
+async function applyCategorySort(key, mode){
+  if(mode === 'default') return;
+  const q = categoryProductSearch.trim().toLowerCase();
+  const allMatching = products.filter(p =>
+    (!q || p.name.toLowerCase().includes(q)) &&
+    (categoryProductViewFilter === 'all' || p.category === categoryProductViewFilter)
+  );
+  if(allMatching.length < 2) return;
+  // Giữ nguyên đúng tập giá trị "order" hiện có của các sản phẩm này, chỉ đổi sản phẩm
+  // nào nhận giá trị nào - để không đụng tới thứ tự của sản phẩm ngoài nhóm đang lọc
+  const orderValues = allMatching.map(p => p.order).sort((a, b) => a - b);
+  const sorted = allMatching.slice();
+  if(mode === 'price-asc') sorted.sort((a, b) => a.priceMin - b.priceMin);
+  else if(mode === 'price-desc') sorted.sort((a, b) => b.priceMin - a.priceMin);
+  else if(mode === 'name-asc') sorted.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  const updates = sorted.map((p, i) => ({ id: p.id, order: orderValues[i] }));
+  const res = await apiFetch('/api/admin/products/reorder-bulk', { method: 'POST', body: JSON.stringify({ updates }) });
+  if(res.ok){ await loadProducts(); showAdminToast('✓ Đã sắp xếp lại thứ tự hiển thị'); }
+  else { alert('Không sắp xếp lại được, thử lại.'); }
+}
+
 function renderCategoryProductPanel(c){
   const q = categoryProductSearch.trim().toLowerCase();
   // MỚI: lọc theo tên tìm kiếm + theo danh mục đang chọn trong dropdown (categoryProductViewFilter
@@ -914,6 +937,16 @@ function renderCategoryProductPanel(c){
           <option value="all" ${categoryProductViewFilter==='all' ? 'selected' : ''}>Tất cả danh mục (${products.filter(p => !q || p.name.toLowerCase().includes(q)).length} sản phẩm)</option>
           ${categories.map(cat => `<option value="${cat.key}" ${categoryProductViewFilter===cat.key ? 'selected' : ''}>${escapeHtml(cat.label)}${cat.key===c.key ? ' — danh mục này' : ''} (${products.filter(p => p.category===cat.key && (!q || p.name.toLowerCase().includes(q))).length} sản phẩm)</option>`).join('')}
         </select>
+      </div>
+      <div style="margin-bottom:10px;">
+        <label style="font-size:12px; color:var(--ink-soft); display:block; margin-bottom:4px;">Sắp xếp lại thứ tự hiển thị theo</label>
+        <select onchange="applyCategorySort('${c.key}', this.value)" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line); font-size:13px;">
+          <option value="default" selected>Giữ nguyên (mặc định)</option>
+          <option value="price-asc">Giá thấp → cao</option>
+          <option value="price-desc">Giá cao → thấp</option>
+          <option value="name-asc">Tên A → Z</option>
+        </select>
+        <p style="font-size:11px; color:var(--ink-soft); margin:4px 0 0;">Áp dụng ngay cho đúng ${allMatching.length} sản phẩm đang lọc ở trên, lưu luôn thành thứ tự hiển thị thật trên trang chủ.</p>
       </div>
       <p style="font-size:12px; color:var(--ink-soft); margin-bottom:6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <span>${allMatching.length} sản phẩm khớp${categoryProductViewFilter!=='all' ? ` (đang trong "${escapeHtml(catLabel(categoryProductViewFilter))}")` : ' (tất cả danh mục)'} · Đã chọn: ${selectedCategoryProductIds.size}</span>
