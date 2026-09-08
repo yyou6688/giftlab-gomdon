@@ -342,9 +342,20 @@ function scrollToCollections(){
 }
 window.addEventListener('scroll', () => {
   const btn = document.getElementById('backToCategoriesBtn');
+  if(!btn) return;
+  // MỚI: nếu dải ảnh bộ sưu tập (#collections) đang ẩn (chưa có ảnh danh mục nào,
+  // hoặc trang chủ đang ở chế độ gọn), dùng dải chip danh mục (#categoryChips) làm mốc
+  // thay thế; nếu cả 2 đều ẩn thì dùng luôn 1 khoảng cuộn cố định để nút vẫn hoạt động
+  // được, không bị "treo" vô thời hạn chỉ vì thiếu 1 khối để đo
   const collectionsEl = document.getElementById('collections');
-  if(!btn || !collectionsEl) return;
-  const pastCollections = collectionsEl.getBoundingClientRect().bottom < 0;
+  const chipsEl = document.getElementById('categoryChips');
+  let referenceBottom = null;
+  if(collectionsEl && collectionsEl.offsetParent !== null){
+    referenceBottom = collectionsEl.getBoundingClientRect().bottom;
+  } else if(chipsEl && chipsEl.offsetParent !== null){
+    referenceBottom = chipsEl.getBoundingClientRect().bottom;
+  }
+  const pastCollections = referenceBottom !== null ? referenceBottom < 0 : window.scrollY > 300;
   btn.style.display = pastCollections ? 'flex' : 'none';
 }, { passive: true });
 
