@@ -561,6 +561,24 @@ app.post('/api/admin/products/:id/pin', requireAdmin, async (req, res) => {
   }
 });
 
+// MỚI: sắp xếp lại hàng loạt thứ tự hiển thị (theo giá/tên) cho đúng nhóm sản phẩm
+// đang xem trong khung quản lý theo danh mục - chỉ đổi "order" của các sản phẩm được
+// truyền lên, không đụng tới sản phẩm ngoài nhóm đang xem
+app.post('/api/admin/products/reorder-bulk', requireAdmin, async (req, res) => {
+  const { updates } = req.body;
+  if (!Array.isArray(updates)) return res.status(400).json({ error: 'Dữ liệu không hợp lệ' });
+  try {
+    const products = await productsStore.listProducts();
+    const orderMap = new Map(updates.map(u => [u.id, u.order]));
+    products.forEach(p => { if (orderMap.has(p.id)) p.order = orderMap.get(p.id); });
+    await productsStore.saveProducts(products);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Lỗi sắp xếp lại sản phẩm:', err.message);
+    res.status(500).json({ error: 'Không sắp xếp lại được' });
+  }
+});
+
 // MỚI: đổi vị trí hiển thị - hoán đổi "order" giữa sản phẩm và 1 sản phẩm liền kề
 // (withId do trang quản trị tính sẵn dựa trên danh sách đang lọc/xem, để mũi tên
 // lên/xuống luôn hoán đổi đúng với sản phẩm đang thấy trên màn hình)
