@@ -1233,6 +1233,19 @@ async function bulkDeleteProducts(){
   if(res.ok){ selectedProductIds = new Set(); await loadProducts(); }
 }
 
+// MỚI: ghim/bỏ ghim sản phẩm lên đầu danh sách hiển thị
+async function pinProduct(id){
+  const res = await apiFetch(`/api/admin/products/${id}/pin`, { method: 'POST' });
+  if(res.ok){ await loadProducts(); } else { alert('Không ghim được sản phẩm.'); }
+}
+
+// MỚI: đổi vị trí hiển thị với sản phẩm liền kề (withId tính sẵn từ trang đang xem)
+async function moveProduct(id, withId){
+  if(!withId) return;
+  const res = await apiFetch(`/api/admin/products/${id}/move-swap`, { method: 'POST', body: JSON.stringify({ withId }) });
+  if(res.ok){ await loadProducts(); } else { alert('Không đổi được vị trí sản phẩm.'); }
+}
+
 function renderProductList(){
   const q = productSearch.trim().toLowerCase();
   const list = products.filter(p =>
@@ -1272,21 +1285,34 @@ function renderProductList(){
     ${selectedProductIds.size > 0 ? renderBulkEditPanel() : ''}
   `;
 
+  // MỚI: có sản phẩm nào đang ghim không - nếu có thì tạm khoá mũi tên lên/xuống
+  // của các sản phẩm khác để tránh rối (ghim luôn quyết định vị trí đầu tiên)
+  const anyPinned = products.some(pp => pp.pinned);
+
   wrap.innerHTML = bulkBar + `<p style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">${list.length} sản phẩm · Trang ${productPage}/${totalPages}</p>` +
-    pageItems.map(p => {
+    pageItems.map((p, i) => {
       const variants = (p.variants && p.variants.length) ? p.variants : [];
       const priceLabel = p.priceMin === p.priceMax ? fmt(p.priceMin) : `${fmt(p.priceMin)} - ${fmt(p.priceMax)}`;
       const isOpen = expandedProductId === p.id;
       const panel = isOpen ? renderVariantPanel(p) : '';
+      // MỚI: mũi tên đổi chỗ với sản phẩm liền kề TRÊN CÙNG TRANG đang xem
+      const prevNeighbor = i > 0 ? pageItems[i - 1] : null;
+      const nextNeighbor = i < pageItems.length - 1 ? pageItems[i + 1] : null;
+      const arrowsDisabled = anyPinned && !p.pinned;
       return `
       <div class="product-row" style="align-items:flex-start;">
         <input type="checkbox" ${selectedProductIds.has(p.id) ? 'checked' : ''} onchange="toggleSelectProduct('${p.id}', this.checked)" style="margin-top:12px;">
+        <div style="display:flex; flex-direction:column; gap:2px; margin-top:10px;">
+          <button onclick="moveProduct('${p.id}', '${prevNeighbor ? prevNeighbor.id : ''}')" ${(!prevNeighbor || arrowsDisabled) ? 'disabled' : ''} title="Lên" style="padding:2px 6px; line-height:1;">▲</button>
+          <button onclick="moveProduct('${p.id}', '${nextNeighbor ? nextNeighbor.id : ''}')" ${(!nextNeighbor || arrowsDisabled) ? 'disabled' : ''} title="Xuống" style="padding:2px 6px; line-height:1;">▼</button>
+        </div>
         ${p.image ? `<img src="${escapeHtml(p.image)}" class="pi" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : `<div class="pi">🎁</div>`}
         <div class="pinfo">
-          <b>${escapeHtml(p.name)}</b>
+          <b>${escapeHtml(p.name)}${p.pinned ? ' · <span style="color:#3C3489; font-weight:600;">📌 Đang ghim đầu</span>' : ''}</b>
           <span>${escapeHtml(catLabel(p.category))} · ${priceLabel} · Tổng tồn: ${p.totalStock}${variants.length > 1 ? ` · ${variants.length} phân loại` : ''}${p.hidden ? ' · <span style="color:#B23A3A; font-weight:600;">🙈 Đang ẩn</span>' : ''}</span>
         </div>
         <div style="display:flex; flex-direction:column; gap:6px;">
+          <button onclick="pinProduct('${p.id}')">${p.pinned ? '📌 Bỏ ghim' : '📌 Ghim đầu'}</button>
           <button onclick="toggleVariantPanel('${p.id}')">${isOpen ? 'Đóng' : 'Sửa giá/kho/ảnh'}</button>
           <button onclick="toggleSharePanel('${p.id}')">${expandedShareId === p.id ? 'Đóng chia sẻ' : '🔗 Chia sẻ'}</button>
           <button onclick="duplicateProduct('${p.id}')">📄 Sao chép</button>
