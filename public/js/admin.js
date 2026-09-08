@@ -5,6 +5,39 @@
 let adminKey = sessionStorage.getItem('giftlab_admin_key') || '';
 let orders = [];
 let products = [];
+// MỚI: các khu vực (Quản lý danh mục, Nhập Shopee, Banner trang chủ...) đang bị thu gọn -
+// nhớ trong lúc còn ở trang quản trị, không bị bung lại mỗi khi 1 khu khác được lưu
+let collapsedSections = new Set();
+
+// MỚI: khu vực có thể thu gọn - tiêu đề + icon mũi tên, bấm vào để đóng/mở, dùng chung
+// cho cả 3 tab (Sản phẩm, Vận chuyển, Trang chủ)
+function sectionHeaderHtml(id, title){
+  const collapsed = collapsedSections.has(id);
+  return `<div id="${id}-header" onclick="toggleSection('${id}')" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer; margin-bottom:${collapsed ? '0' : '10px'};">
+    <h3 style="margin:0;">${title}</h3>
+    <span id="${id}-icon" style="font-size:13px; color:var(--ink-soft);">${collapsed ? '▸' : '▾'}</span>
+  </div>`;
+}
+function sectionBodyStyle(id){
+  return collapsedSections.has(id) ? 'display:none;' : '';
+}
+function toggleSection(id){
+  const body = document.getElementById(id + '-body');
+  const icon = document.getElementById(id + '-icon');
+  const header = document.getElementById(id + '-header');
+  if(!body) return;
+  if(collapsedSections.has(id)){
+    collapsedSections.delete(id);
+    body.style.display = '';
+    if(icon) icon.textContent = '▾';
+    if(header) header.style.marginBottom = '10px';
+  } else {
+    collapsedSections.add(id);
+    body.style.display = 'none';
+    if(icon) icon.textContent = '▸';
+    if(header) header.style.marginBottom = '0';
+  }
+}
 let productSearch = '';
 let expandedProductId = null;
 let expandedShareId = null; // MỚI: sản phẩm đang mở khung "Chia sẻ đợt gom" (link + mã QR)
@@ -562,30 +595,35 @@ function renderProducts(){
   wrap.innerHTML = `
     <!-- MỚI: quản lý danh mục -->
     <div class="add-product-form">
-      <h3>🗂️ Quản lý danh mục</h3>
-      <div id="categoryManageList">${renderCategoryManageRows()}</div>
-      <div class="form-row" style="margin-top:10px;">
-        <div class="form-field"><input id="new-cat-label" placeholder="Tên danh mục mới, VD: Đồ chơi Noel"></div>
-        <button onclick="addCategory()">+ Thêm danh mục</button>
+      ${sectionHeaderHtml('cat-manage', '🗂️ Quản lý danh mục')}
+      <div id="cat-manage-body" style="${sectionBodyStyle('cat-manage')}">
+        <div id="categoryManageList">${renderCategoryManageRows()}</div>
+        <div class="form-row" style="margin-top:10px;">
+          <div class="form-field"><input id="new-cat-label" placeholder="Tên danh mục mới, VD: Đồ chơi Noel"></div>
+          <button onclick="addCategory()">+ Thêm danh mục</button>
+        </div>
+        <p id="categoryMsg" style="font-size:13px; margin-top:8px; color:#B23A3A;"></p>
+        <button onclick="autoCategorizeProducts()" style="margin-top:10px; background:var(--sage-deep); color:#fff; border:none; padding:8px 14px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">🪄 Tự động phân loại lại sản phẩm trong "Phụ kiện khác" theo tên</button>
+        <p id="autoCatMsg" style="font-size:13px; margin-top:8px; color:var(--sage-deep);"></p>
       </div>
-      <p id="categoryMsg" style="font-size:13px; margin-top:8px; color:#B23A3A;"></p>
-      <button onclick="autoCategorizeProducts()" style="margin-top:10px; background:var(--sage-deep); color:#fff; border:none; padding:8px 14px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">🪄 Tự động phân loại lại sản phẩm trong "Phụ kiện khác" theo tên</button>
-      <p id="autoCatMsg" style="font-size:13px; margin-top:8px; color:var(--sage-deep);"></p>
     </div>
 
     <!-- MỚI: nhập/cập nhật hàng loạt sản phẩm từ Shopee -->
     <div class="add-product-form">
-      <h3>📦 Nhập sản phẩm hàng loạt từ Shopee</h3>
-      <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Chọn cả 3 file Shopee xuất ra (basic_info, sales_info, media_info). Sản phẩm đã có (trùng Mã Sản phẩm) sẽ được cập nhật tên/giá/kho/ảnh/mô tả, không đổi danh mục đã gán. Sản phẩm mới sẽ tạm xếp vào "Phụ kiện khác".</p>
-      <div class="form-field"><label>File basic_info (.xlsx)</label><input type="file" id="shopee-basic-file" accept=".xlsx,.xls"></div>
-      <div class="form-field"><label>File sales_info (.xlsx) — bắt buộc</label><input type="file" id="shopee-sales-file" accept=".xlsx,.xls"></div>
-      <div class="form-field"><label>File media_info (.xlsx)</label><input type="file" id="shopee-media-file" accept=".xlsx,.xls"></div>
-      <button onclick="importShopeeProducts()">Nhập sản phẩm</button>
-      <p id="shopeeImportMsg" style="font-size:13px; margin-top:8px; color:var(--sage-deep);"></p>
+      ${sectionHeaderHtml('shopee-import', '📦 Nhập sản phẩm hàng loạt từ Shopee')}
+      <div id="shopee-import-body" style="${sectionBodyStyle('shopee-import')}">
+        <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Chọn cả 3 file Shopee xuất ra (basic_info, sales_info, media_info). Sản phẩm đã có (trùng Mã Sản phẩm) sẽ được cập nhật tên/giá/kho/ảnh/mô tả, không đổi danh mục đã gán. Sản phẩm mới sẽ tạm xếp vào "Phụ kiện khác".</p>
+        <div class="form-field"><label>File basic_info (.xlsx)</label><input type="file" id="shopee-basic-file" accept=".xlsx,.xls"></div>
+        <div class="form-field"><label>File sales_info (.xlsx) — bắt buộc</label><input type="file" id="shopee-sales-file" accept=".xlsx,.xls"></div>
+        <div class="form-field"><label>File media_info (.xlsx)</label><input type="file" id="shopee-media-file" accept=".xlsx,.xls"></div>
+        <button onclick="importShopeeProducts()">Nhập sản phẩm</button>
+        <p id="shopeeImportMsg" style="font-size:13px; margin-top:8px; color:var(--sage-deep);"></p>
+      </div>
     </div>
 
     <div class="add-product-form">
-      <h3>Thêm sản phẩm mới</h3>
+      ${sectionHeaderHtml('add-product', 'Thêm sản phẩm mới')}
+      <div id="add-product-body" style="${sectionBodyStyle('add-product')}">
       <div class="form-row">
         <div class="form-field"><label>Tên</label><input id="np-name" placeholder="Móc khóa mèo mini"></div>
         <div class="form-field">
@@ -630,6 +668,7 @@ function renderProducts(){
       </label>
       <button onclick="addProduct()" style="background:var(--sage-deep); color:#fff; border:none; padding:10px 18px; border-radius:10px; font-weight:600; cursor:pointer;">Thêm sản phẩm</button>
       <p id="addProductMsg" style="font-size:13px; margin-top:8px; color:#B23A3A;"></p>
+      </div>
     </div>
     <div class="form-row" style="margin-bottom:14px;">
       <div class="form-field">
@@ -1750,35 +1789,43 @@ function renderShippingTab(){
   const wrap = document.getElementById('shippingTab');
   wrap.innerHTML = `
     <div class="add-product-form">
-      <h3>⚖️ Cân nặng & mốc phí</h3>
-      <div class="form-row">
-        <div class="form-field"><label>Cân nặng mặc định (g)</label><input type="number" id="sc-default-weight" value="${shippingConfig.defaultWeightGram}"></div>
-        <div class="form-field"><label>Phí mỗi kg vượt mốc cao nhất (đ)</label><input type="number" id="sc-extra-fee" value="${shippingConfig.extraFeePerKgAboveMax}"></div>
+      ${sectionHeaderHtml('sc-weight', '⚖️ Cân nặng & mốc phí')}
+      <div id="sc-weight-body" style="${sectionBodyStyle('sc-weight')}">
+        <div class="form-row">
+          <div class="form-field"><label>Cân nặng mặc định (g)</label><input type="number" id="sc-default-weight" value="${shippingConfig.defaultWeightGram}"></div>
+          <div class="form-field"><label>Phí mỗi kg vượt mốc cao nhất (đ)</label><input type="number" id="sc-extra-fee" value="${shippingConfig.extraFeePerKgAboveMax}"></div>
+        </div>
+        <p style="font-size:12px; color:var(--ink-soft); margin:6px 0 10px;">Áp dụng cho sản phẩm chưa nhập cân nặng riêng (sửa trong tab Sản phẩm).</p>
+
+        <h4 style="font-size:14px; margin:14px 0 8px;">Mốc phí theo tổng cân nặng đơn hàng</h4>
+        <div id="weightTiersList">${renderWeightTierRows()}</div>
+        <button onclick="addWeightTierRow()" style="margin-top:4px;">+ Thêm mốc</button>
       </div>
-      <p style="font-size:12px; color:var(--ink-soft); margin:6px 0 10px;">Áp dụng cho sản phẩm chưa nhập cân nặng riêng (sửa trong tab Sản phẩm).</p>
-
-      <h4 style="font-size:14px; margin:14px 0 8px;">Mốc phí theo tổng cân nặng đơn hàng</h4>
-      <div id="weightTiersList">${renderWeightTierRows()}</div>
-      <button onclick="addWeightTierRow()" style="margin-top:4px;">+ Thêm mốc</button>
     </div>
 
     <div class="add-product-form">
-      <h3>🎁 Quy tắc Freeship</h3>
-      <div id="freeshipRulesList">${renderFreeshipRuleRows()}</div>
-      <button onclick="addFreeshipRuleRow()" style="margin-top:4px;">+ Thêm quy tắc freeship</button>
+      ${sectionHeaderHtml('sc-freeship', '🎁 Quy tắc Freeship')}
+      <div id="sc-freeship-body" style="${sectionBodyStyle('sc-freeship')}">
+        <div id="freeshipRulesList">${renderFreeshipRuleRows()}</div>
+        <button onclick="addFreeshipRuleRow()" style="margin-top:4px;">+ Thêm quy tắc freeship</button>
+      </div>
     </div>
 
     <div class="add-product-form">
-      <h3>🎀 Gói quà tặng</h3>
-      <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Vẫn tính phí theo số lượng sản phẩm như trước (1 sản phẩm / 2 sản phẩm / miễn phí từ mức nào đó) — chỉ khác là mô tả và các mốc giá dưới đây giờ tự chỉnh được, không cần sửa code nữa.</p>
-      ${renderGiftWrapSettings()}
+      ${sectionHeaderHtml('sc-giftwrap', '🎀 Gói quà tặng')}
+      <div id="sc-giftwrap-body" style="${sectionBodyStyle('sc-giftwrap')}">
+        <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Vẫn tính phí theo số lượng sản phẩm như trước (1 sản phẩm / 2 sản phẩm / miễn phí từ mức nào đó) — chỉ khác là mô tả và các mốc giá dưới đây giờ tự chỉnh được, không cần sửa code nữa.</p>
+        ${renderGiftWrapSettings()}
+      </div>
     </div>
 
     <div class="add-product-form">
-      <h3>🧩 Dịch vụ / sản phẩm kèm thêm khác</h3>
-      <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Mỗi mục có 1 giá cố định (không tính theo số lượng). Khách sẽ thấy các mục đang "Áp dụng" dưới dạng ô tick chọn lúc đặt hàng.</p>
-      <div id="addOnsList">${renderAddOnRows()}</div>
-      <button onclick="addAddOnRow()" style="margin-top:8px;">+ Thêm dịch vụ/sản phẩm kèm thêm</button>
+      ${sectionHeaderHtml('sc-addons', '🧩 Dịch vụ / sản phẩm kèm thêm khác')}
+      <div id="sc-addons-body" style="${sectionBodyStyle('sc-addons')}">
+        <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Mỗi mục có 1 giá cố định (không tính theo số lượng). Khách sẽ thấy các mục đang "Áp dụng" dưới dạng ô tick chọn lúc đặt hàng.</p>
+        <div id="addOnsList">${renderAddOnRows()}</div>
+        <button onclick="addAddOnRow()" style="margin-top:8px;">+ Thêm dịch vụ/sản phẩm kèm thêm</button>
+      </div>
     </div>
 
     <button onclick="saveShippingConfig()" style="background:var(--sage-deep); color:#fff; border:none; padding:10px 18px; border-radius:10px; font-weight:600; cursor:pointer;">Lưu cài đặt vận chuyển</button>
@@ -1971,32 +2018,40 @@ function renderHomepageTab(){
   const wrap = document.getElementById('homepageTab');
   wrap.innerHTML = `
     <div class="add-product-form">
-      <h3>🖼️ Banner trang chủ (tối đa 3 ảnh, xoay vòng)</h3>
-      <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Để trống ô nào thì ảnh đó không hiện trên web. Nếu chỉ có 1 ảnh, nút chuyển ảnh sẽ tự ẩn.</p>
-      <div id="heroSlidesList">${renderHeroSlideRows()}</div>
-    </div>
-    <div class="add-product-form">
-      <h3>🗂️ Bộ sưu tập nổi bật (tự động lấy theo danh mục sản phẩm)</h3>
-      <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Danh sách dưới đây LUÔN khớp với danh mục sản phẩm hiện có (thêm/sửa tên/xoá danh mục ở tab Sản phẩm → Quản lý danh mục). Mỗi danh mục có thể tự chỉnh ảnh riêng và ẩn/hiện trên trang chủ mà không cần xoá hẳn.</p>
-      <div id="collectionsList">${renderCollectionRows()}</div>
-    </div>
-    <div class="add-product-form">
-      <h3>⭐ Sản phẩm nổi bật</h3>
-      <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Tự đặt tiêu đề và chọn tay từng sản phẩm muốn ưu tiên hiển thị trên trang chủ.</p>
-      <div class="form-field">
-        <label>Tiêu đề hiển thị</label>
-        <input type="text" id="fp-title" value="${escapeHtml((homepageContent.featuredProducts && homepageContent.featuredProducts.title) || 'Sản phẩm nổi bật')}" oninput="ensureFeaturedProducts(); homepageContent.featuredProducts.title=this.value">
+      ${sectionHeaderHtml('hp-banner', '🖼️ Banner trang chủ (tối đa 3 ảnh, xoay vòng)')}
+      <div id="hp-banner-body" style="${sectionBodyStyle('hp-banner')}">
+        <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Để trống ô nào thì ảnh đó không hiện trên web. Nếu chỉ có 1 ảnh, nút chuyển ảnh sẽ tự ẩn.</p>
+        <div id="heroSlidesList">${renderHeroSlideRows()}</div>
       </div>
-      <p style="font-size:12px; color:var(--ink-soft); margin:10px 0 6px;">Sản phẩm đã chọn:</p>
-      <div id="featuredSelectedList">${renderFeaturedSelectedList()}</div>
-      <input placeholder="Tìm sản phẩm để thêm..." style="margin-top:10px;" oninput="featuredProductSearch=this.value; document.getElementById('featuredSearchList').innerHTML = renderFeaturedSearchList();">
-      <div id="featuredSearchList" style="max-height:220px; overflow-y:auto; margin-top:8px;"></div>
     </div>
     <div class="add-product-form">
-      <h3>🤝 Cam kết / Uy tín (khối 3 ô cuối trang chủ)</h3>
-      <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Tự thêm/sửa/xoá từng mục — mỗi mục gồm 1 icon (gõ emoji), tiêu đề và mô tả ngắn.</p>
-      <div id="trustItemsList">${renderTrustItemRows()}</div>
-      <button onclick="addTrustItemRow()" style="margin-top:8px;">+ Thêm mục</button>
+      ${sectionHeaderHtml('hp-collections', '🗂️ Bộ sưu tập nổi bật (tự động lấy theo danh mục sản phẩm)')}
+      <div id="hp-collections-body" style="${sectionBodyStyle('hp-collections')}">
+        <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Danh sách dưới đây LUÔN khớp với danh mục sản phẩm hiện có (thêm/sửa tên/xoá danh mục ở tab Sản phẩm → Quản lý danh mục). Mỗi danh mục có thể tự chỉnh ảnh riêng và ẩn/hiện trên trang chủ mà không cần xoá hẳn.</p>
+        <div id="collectionsList">${renderCollectionRows()}</div>
+      </div>
+    </div>
+    <div class="add-product-form">
+      ${sectionHeaderHtml('hp-featured', '⭐ Sản phẩm nổi bật')}
+      <div id="hp-featured-body" style="${sectionBodyStyle('hp-featured')}">
+        <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Tự đặt tiêu đề và chọn tay từng sản phẩm muốn ưu tiên hiển thị trên trang chủ.</p>
+        <div class="form-field">
+          <label>Tiêu đề hiển thị</label>
+          <input type="text" id="fp-title" value="${escapeHtml((homepageContent.featuredProducts && homepageContent.featuredProducts.title) || 'Sản phẩm nổi bật')}" oninput="ensureFeaturedProducts(); homepageContent.featuredProducts.title=this.value">
+        </div>
+        <p style="font-size:12px; color:var(--ink-soft); margin:10px 0 6px;">Sản phẩm đã chọn:</p>
+        <div id="featuredSelectedList">${renderFeaturedSelectedList()}</div>
+        <input placeholder="Tìm sản phẩm để thêm..." style="margin-top:10px;" oninput="featuredProductSearch=this.value; document.getElementById('featuredSearchList').innerHTML = renderFeaturedSearchList();">
+        <div id="featuredSearchList" style="max-height:220px; overflow-y:auto; margin-top:8px;"></div>
+      </div>
+    </div>
+    <div class="add-product-form">
+      ${sectionHeaderHtml('hp-trust', '🤝 Cam kết / Uy tín (khối 3 ô cuối trang chủ)')}
+      <div id="hp-trust-body" style="${sectionBodyStyle('hp-trust')}">
+        <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Tự thêm/sửa/xoá từng mục — mỗi mục gồm 1 icon (gõ emoji), tiêu đề và mô tả ngắn.</p>
+        <div id="trustItemsList">${renderTrustItemRows()}</div>
+        <button onclick="addTrustItemRow()" style="margin-top:8px;">+ Thêm mục</button>
+      </div>
     </div>
     <button onclick="saveHomepageContent()" style="background:var(--sage-deep); color:#fff; border:none; padding:10px 18px; border-radius:10px; font-weight:600; cursor:pointer;">Lưu nội dung trang chủ</button>
     <p id="homepageSaveMsg" style="font-size:13px; margin-top:10px; color:var(--sage-deep);"></p>
