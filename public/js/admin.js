@@ -820,14 +820,8 @@ function renderCategoryProductPanel(c){
     (categoryProductViewFilter === 'all' || p.category === categoryProductViewFilter)
   );
 
-  const totalPages = Math.max(1, Math.ceil(allMatching.length / CATEGORY_PRODUCTS_PER_PAGE));
-  if(categoryProductPage > totalPages) categoryProductPage = totalPages;
-  if(categoryProductPage < 1) categoryProductPage = 1;
-  const shown = allMatching.slice((categoryProductPage - 1) * CATEGORY_PRODUCTS_PER_PAGE, categoryProductPage * CATEGORY_PRODUCTS_PER_PAGE);
-
-  // MỚI: dùng data-id + class thay cho nhúng chuỗi id trực tiếp vào onchange="..." — tránh
-  // trường hợp tên sản phẩm phía sau (hoặc chính id) chứa ký tự đặc biệt làm hỏng cấu trúc
-  // HTML của cả khối, khiến các checkbox phía sau bấm không có phản ứng gì.
+  // MỚI: hiện toàn bộ sản phẩm khớp, không phân trang 20 sản phẩm/lần nữa
+  const shown = allMatching;
   const rows = shown.map(p => `
     <label style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13px;">
       <input type="checkbox" class="cat-product-checkbox" data-id="${escapeHtml(p.id)}" ${selectedCategoryProductIds.has(p.id) ? 'checked' : ''}>
@@ -837,13 +831,7 @@ function renderCategoryProductPanel(c){
     </label>
   `).join('');
 
-  const pagerHtml = totalPages > 1 ? `
-    <div class="pager" style="margin-top:8px;">
-      <button onclick="categoryProductPage=${categoryProductPage - 1}; document.getElementById('categoryManageList').innerHTML = renderCategoryManageRows();" ${categoryProductPage===1?'disabled':''}>‹ Trước</button>
-      <span style="font-size:12px; align-self:center; padding:0 6px;">Trang ${categoryProductPage}/${totalPages}</span>
-      <button onclick="categoryProductPage=${categoryProductPage + 1}; document.getElementById('categoryManageList').innerHTML = renderCategoryManageRows();" ${categoryProductPage===totalPages?'disabled':''}>Sau ›</button>
-    </div>
-  ` : '';
+  const pagerHtml = '';
 
   // MỚI: dropdown chọn danh mục đích bên dưới cho phép gán bất kỳ danh mục nào, không chỉ
   // danh mục đang mở, nên không cần nút "Đưa ra khỏi danh mục" riêng nữa
