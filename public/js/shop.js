@@ -336,8 +336,14 @@ function renderCategoryChips(){
 
 // MỚI: nút nổi "Quay lại danh mục" (mobile/tablet) - hiện ra sau khi cuộn qua dải danh
 // mục, cuộn mượt về đúng dải đó khi bấm
+// MỚI: cuộn về đúng khối danh mục ĐANG HIỂN THỊ - ưu tiên dải ảnh bộ sưu tập
+// (#collections), nếu khối đó đang ẩn thì cuộn về dải chip danh mục (#categoryChips) thay thế
 function scrollToCollections(){
-  const target = document.getElementById('collections');
+  const collectionsEl = document.getElementById('collections');
+  const chipsEl = document.getElementById('categoryChips');
+  const target = (collectionsEl && collectionsEl.offsetParent !== null) ? collectionsEl
+    : (chipsEl && chipsEl.offsetParent !== null) ? chipsEl
+    : null;
   if(target) target.scrollIntoView({ behavior: 'smooth' });
 }
 window.addEventListener('scroll', () => {
