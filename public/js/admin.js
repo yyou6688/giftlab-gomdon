@@ -205,13 +205,18 @@ function renderOrders(){
     return;
   }
 
-  // MỚI: thanh chọn hàng loạt - chọn tất cả, tải Excel gắn mã vận đơn, xuất Excel
+  // MỚI: thanh chọn hàng loạt - chọn tất cả, tải Excel gắn mã vận đơn, xuất Excel,
+  // huỷ tất cả / xoá tất cả các đơn đã tick chọn
   const bulkBar = `
     <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px;">
       <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600;">
         <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="toggleSelectAllOrders(this.checked)"> Chọn tất cả (${filtered.length})
       </label>
       <span style="font-size:13px; color:var(--ink-soft);">Đã chọn: ${selectedOrderIds.size}</span>
+      ${selectedOrderIds.size > 0 ? `
+        <button class="danger" onclick="bulkCancelOrders()" style="font-size:12px;">Huỷ tất cả đã chọn</button>
+        <button class="danger" onclick="bulkDeleteOrders()" style="font-size:12px;">Xoá tất cả đã chọn</button>
+      ` : ''}
       <label style="margin-left:auto; font-size:12px; background:var(--sage-deep); color:#fff; padding:8px 14px; border-radius:8px; cursor:pointer; font-weight:600;">
         📥 Tải Excel gắn mã vận đơn
         <input type="file" accept=".xlsx,.xls" style="display:none;" onchange="handleTrackingExcelUpload(this)">
@@ -341,6 +346,43 @@ function toggleSelectAllOrders(checked){
   else { filtered.forEach(o => selectedOrderIds.delete(o.id)); }
   renderOrders();
 }
+
+// MỚI: huỷ hàng loạt các đơn đã tick chọn - gọi lại đúng API huỷ từng đơn 1 (giữ
+// nguyên các kiểm tra sẵn có: chặn đơn đã có mã vận đơn, hoàn trả tồn kho khi huỷ).
+// Đơn nào không huỷ được (VD đã có mã vận đơn) sẽ được báo riêng, các đơn còn lại vẫn huỷ bình thường.
+async function bulkCancelOrders(){
+  const ids = Array.from(selectedOrderIds);
+  if(ids.length === 0) return;
+  if(!confirm(`Huỷ ${ids.length} đơn hàng đã chọn? Không thể hoàn tác.`)) return;
+  const failed = [];
+  for(const id of ids){
+    const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'huy' }) });
+    if(!res.ok) failed.push(id);
+  }
+  selectedOrderIds.clear();
+  await tryLoadOrders();
+  if(failed.length){
+    alert(`Không huỷ được ${failed.length} đơn (có thể đã có mã vận đơn): #${failed.join(', #')}`);
+  }
+}
+
+// MỚI: xoá hàng loạt các đơn đã tick chọn - gọi lại đúng API xoá từng đơn 1
+async function bulkDeleteOrders(){
+  const ids = Array.from(selectedOrderIds);
+  if(ids.length === 0) return;
+  if(!confirm(`Xoá hẳn ${ids.length} đơn hàng đã chọn? Không thể hoàn tác.`)) return;
+  const failed = [];
+  for(const id of ids){
+    const res = await apiFetch(`/api/orders/${id}`, { method: 'DELETE' });
+    if(!res.ok) failed.push(id);
+  }
+  selectedOrderIds.clear();
+  await tryLoadOrders();
+  if(failed.length){
+    alert(`Không xoá được ${failed.length} đơn: #${failed.join(', #')}`);
+  }
+}
+
 
 // MỚI: xoá thủ công 1 đơn hàng (đơn rác/trùng/spam)
 async function deleteOrder(id){
