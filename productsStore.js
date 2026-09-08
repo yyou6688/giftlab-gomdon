@@ -45,8 +45,8 @@ async function getSheetsClient() {
 }
 
 // Tab riêng tên "Products" trong CÙNG spreadsheet đang lưu đơn hàng
-const SHEET_RANGE = 'Products!A:K';
-const HEADER_ROW = ['ID', 'Tên', 'Danh mục', 'Ảnh', 'Mô tả', 'VariantsJSON', 'DetailImagesJSON', 'PriceMin', 'PriceMax', 'TotalStock', 'Hidden'];
+const SHEET_RANGE = 'Products!A:M';
+const HEADER_ROW = ['ID', 'Tên', 'Danh mục', 'Ảnh', 'Mô tả', 'VariantsJSON', 'DetailImagesJSON', 'PriceMin', 'PriceMax', 'TotalStock', 'Hidden', 'Pinned', 'Order'];
 
 function rowToProduct(row) {
   return {
@@ -61,6 +61,8 @@ function rowToProduct(row) {
     priceMax: Number(row[8]) || 0,
     totalStock: Number(row[9]) || 0,
     hidden: row[10] === 'TRUE' || row[10] === true, // MỚI: ẩn/hiện trên trang khách xem
+    pinned: row[11] === 'TRUE' || row[11] === true, // MỚI: ghim lên đầu danh sách hiển thị
+    order: (row[12] !== undefined && row[12] !== '') ? Number(row[12]) : null, // MỚI: thứ tự hiển thị thủ công
   };
 }
 function productToRow(p) {
@@ -68,8 +70,23 @@ function productToRow(p) {
     p.id, p.name, p.category, p.image || '', p.description || '',
     JSON.stringify(p.variants || []), JSON.stringify(p.detailImages || []),
     p.priceMin || 0, p.priceMax || 0, p.totalStock || 0,
-    p.hidden ? 'TRUE' : 'FALSE' // MỚI
+    p.hidden ? 'TRUE' : 'FALSE', // MỚI
+    p.pinned ? 'TRUE' : 'FALSE', // MỚI
+    (p.order === undefined || p.order === null) ? '' : p.order // MỚI
   ];
+}
+
+// MỚI: gán "order" mặc định cho sản phẩm chưa từng có (giữ đúng thứ tự cũ đang lưu
+// trong Sheet), rồi sắp lại: sản phẩm đang ghim lên trước, còn lại theo "order" tăng dần
+function normalizeAndSortProducts(products) {
+  products.forEach((p, idx) => {
+    if (p.pinned === undefined) p.pinned = false;
+    if (p.order === undefined || p.order === null || Number.isNaN(p.order)) p.order = idx;
+  });
+  return products.slice().sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return a.order - b.order;
+  });
 }
 
 // ---------- Backend: file JSON (chỉ dùng khi chưa cấu hình Google Sheets) ----------
@@ -102,7 +119,8 @@ async function sheetSaveProducts(products) {
 
 // ---------- API dùng chung, server.js chỉ gọi 2 hàm dưới đây ----------
 async function listProducts() {
-  return useSheets ? sheetListProducts() : fileListProducts();
+  const products = useSheets ? await sheetListProducts() : await fileListProducts();
+  return normalizeAndSortProducts(products);
 }
 async function saveProducts(products) {
   return useSheets ? sheetSaveProducts(products) : fileSaveProducts(products);
