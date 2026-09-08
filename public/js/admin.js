@@ -1583,7 +1583,24 @@ async function saveProductDetail(id){
     method: 'PUT',
     body: JSON.stringify({ name, category, hidden, description, image, detailImages })
   });
-  if(res.ok){ await loadProducts(); } else { alert('Không lưu được, thử lại.'); }
+  if(res.ok){ await loadProducts(); showAdminToast('✓ Đã cập nhật sản phẩm'); } else { alert('Không lưu được, thử lại.'); }
+}
+
+// MỚI: thông báo nhỏ báo lưu thành công, tự ẩn sau ~1.8s (dùng lại đúng kiểu toast
+// "Đã thêm vào giỏ hàng" bên trang khách, cùng class CSS .add-to-cart-toast)
+let adminToastTimeout = null;
+function showAdminToast(message){
+  let toast = document.getElementById('adminToast');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'adminToast';
+    toast.className = 'add-to-cart-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(adminToastTimeout);
+  adminToastTimeout = setTimeout(() => { toast.classList.remove('show'); }, 1800);
 }
 
 async function uploadVariantImage(id, idx){
@@ -1623,7 +1640,7 @@ async function saveVariant(id, idx){
     method: 'PUT',
     body: JSON.stringify({ price: Number(price), stock: Number(stock), image, weight })
   });
-  if(res.ok) await loadProducts(); else alert('Không cập nhật được.');
+  if(res.ok){ await loadProducts(); showAdminToast('✓ Đã cập nhật phân loại'); } else alert('Không cập nhật được.');
 }
 
 async function addProduct(){
