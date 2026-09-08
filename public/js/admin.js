@@ -780,12 +780,16 @@ async function uploadToTarget(fileInput, targetInputId){
 
 // MỚI: danh sách danh mục hiện có + số sản phẩm mỗi danh mục + nút xoá
 function renderCategoryManageRows(){
-  return categories.map(c => {
+  return categories.map((c, i) => {
     const count = products.filter(p => p.category === c.key).length;
     const isOpen = expandedCategoryKey === c.key;
     return `
       <div style="padding:8px 0; border-bottom:1px dashed var(--line);">
         <div style="display:flex; align-items:center; gap:10px;">
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <button onclick="moveCategory('${c.key}','up')" ${i===0 ? 'disabled' : ''} title="Lên" style="padding:2px 6px; line-height:1;">▲</button>
+            <button onclick="moveCategory('${c.key}','down')" ${i===categories.length-1 ? 'disabled' : ''} title="Xuống" style="padding:2px 6px; line-height:1;">▼</button>
+          </div>
           <input type="text" value="${escapeHtml(c.label)}" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); font-size:13px;" onchange="renameCategory('${c.key}', this.value)">
           <span style="font-size:12px; color:var(--ink-soft); white-space:nowrap;">${count} sản phẩm</span>
           <button onclick="toggleCategoryProducts('${c.key}')">${isOpen ? 'Đóng' : 'Quản lý sản phẩm'}</button>
@@ -795,6 +799,19 @@ function renderCategoryManageRows(){
       </div>
     `;
   }).join('');
+}
+
+// MỚI: đổi thứ tự hiển thị danh mục (áp dụng luôn cho "Bộ sưu tập nổi bật" và sidebar
+// danh mục ở trang chủ, vì cả 2 đều tự lấy theo đúng thứ tự danh mục đang lưu ở đây)
+async function moveCategory(key, direction){
+  const idx = categories.findIndex(c => c.key === key);
+  if(idx === -1) return;
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if(swapIdx < 0 || swapIdx >= categories.length) return;
+  const backup = categories.slice();
+  [categories[idx], categories[swapIdx]] = [categories[swapIdx], categories[idx]];
+  const ok = await saveCategoriesToServer();
+  if(ok){ renderProducts(); showAdminToast('✓ Đã đổi vị trí danh mục'); } else { categories = backup; renderProducts(); }
 }
 
 // MỚI: mở/đóng khu quản lý sản phẩm bên trong 1 danh mục
@@ -822,14 +839,25 @@ function renderCategoryProductPanel(c){
 
   // MỚI: hiện toàn bộ sản phẩm khớp, không phân trang 20 sản phẩm/lần nữa
   const shown = allMatching;
-  const rows = shown.map(p => `
+  const rows = shown.map((p, i) => {
+    // MỚI: đổi vị trí với sản phẩm liền kề TRONG ĐÚNG DANH SÁCH ĐANG XEM ở đây (dùng lại
+    // chung API move-swap với mũi tên ở danh sách sản phẩm chính, nên vị trí đổi ở đây
+    // cũng phản ánh đúng qua bên đó, kể cả ngoài trang chủ)
+    const prevNeighbor = i > 0 ? shown[i - 1] : null;
+    const nextNeighbor = i < shown.length - 1 ? shown[i + 1] : null;
+    return `
     <label style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13px;">
       <input type="checkbox" class="cat-product-checkbox" data-id="${escapeHtml(p.id)}" ${selectedCategoryProductIds.has(p.id) ? 'checked' : ''}>
+      <div style="display:flex; flex-direction:column; gap:1px;">
+        <button onclick="event.preventDefault(); event.stopPropagation(); moveProduct('${p.id}', '${prevNeighbor ? prevNeighbor.id : ''}')" ${!prevNeighbor ? 'disabled' : ''} title="Lên" style="padding:1px 5px; line-height:1;">▲</button>
+        <button onclick="event.preventDefault(); event.stopPropagation(); moveProduct('${p.id}', '${nextNeighbor ? nextNeighbor.id : ''}')" ${!nextNeighbor ? 'disabled' : ''} title="Xuống" style="padding:1px 5px; line-height:1;">▼</button>
+      </div>
       ${p.image ? `<img src="${escapeHtml(p.image)}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
       <span style="flex:1;">${escapeHtml(p.name)}</span>
       <span style="font-size:11px; color:${p.category===c.key ? 'var(--sage-deep)' : 'var(--ink-soft)'}; white-space:nowrap;">${p.category===c.key ? '✓ đang ở đây' : escapeHtml(catLabel(p.category))}</span>
     </label>
-  `).join('');
+  `;
+  }).join('');
 
   const pagerHtml = '';
 
