@@ -632,7 +632,8 @@ async function runBulkImageImport(){
   if(typeof JSZip === 'undefined'){ addLog('Thiếu thư viện đọc file zip (JSZip) - tải lại trang rồi thử lại.', '#B23A3A'); return; }
 
   runBtn.disabled = true;
-  addLog('Đang giải nén file zip...');
+  addLog('Đang giải nén file zip (file càng lớn càng mất thời gian, đợi chút)...');
+  await new Promise(r => setTimeout(r, 30)); // để dòng log trên kịp hiện ra trước khi giải nén (việc nặng, có thể làm treo giao diện 1 lúc)
   let zip;
   try{
     zip = await JSZip.loadAsync(zipFile);
@@ -642,7 +643,7 @@ async function runBulkImageImport(){
     return;
   }
 
-  const imageExt = /\.(jpe?g|png|webp|gif)$/i;
+  const imageExt = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
   const entries = Object.values(zip.files)
     .filter(f => !f.dir && !f.name.startsWith('__MACOSX') && imageExt.test(f.name))
     .sort((a, b) => a.name.localeCompare(b.name, 'vi', { numeric: true }));
@@ -682,7 +683,7 @@ async function runBulkImageImport(){
       // MỚI: JSZip trả về blob không kèm đúng kiểu file ảnh (MIME type), khiến server
       // tưởng nhầm không phải ảnh và từ chối nhận - tự gán lại đúng kiểu theo đuôi tên ảnh
       const ext = (entry.name.split('.').pop() || '').toLowerCase();
-      const mimeByExt = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
+      const mimeByExt = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic', heif: 'image/heic' };
       const typedBlob = new Blob([blob], { type: mimeByExt[ext] || 'image/jpeg' });
       const formData = new FormData();
       formData.append('image', typedBlob, entry.name.split('/').pop());
