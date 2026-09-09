@@ -46,8 +46,8 @@ async function getSheetsClient() {
 }
 
 // Tab riêng tên "Categories" trong CÙNG spreadsheet đang lưu đơn hàng/sản phẩm/trang chủ
-const SHEET_RANGE = 'Categories!A:B';
-const HEADER_ROW = ['Key', 'Label'];
+const SHEET_RANGE = 'Categories!A:C';
+const HEADER_ROW = ['Key', 'Label', 'SortMode'];
 
 // Danh mục hiện có sẵn khi mới bắt đầu dùng Sheets (khớp với categories.json gốc trong repo),
 // dùng để tab Categories không bị trống trơn nếu chưa lưu lần nào qua trang quản trị
@@ -61,11 +61,19 @@ const DEFAULT_CATEGORIES = [
   { key: 'outfitdoll', label: 'Outfit doll' },
 ];
 
+// MỚI: 'manual' (mặc định, ghim/mũi tên tự sắp tay) hoặc 'price-asc'/'price-desc'/'name-asc'
+// (luôn tự sắp theo giá/tên, kể cả sản phẩm thêm sau này, không cần bấm lại)
+const VALID_SORT_MODES = ['manual', 'price-asc', 'price-desc', 'name-asc'];
+
 function rowToCategory(row) {
-  return { key: row[0], label: row[1] || '' };
+  return {
+    key: row[0],
+    label: row[1] || '',
+    sortMode: VALID_SORT_MODES.includes(row[2]) ? row[2] : 'manual',
+  };
 }
 function categoryToRow(c) {
-  return [c.key, c.label];
+  return [c.key, c.label, VALID_SORT_MODES.includes(c.sortMode) ? c.sortMode : 'manual'];
 }
 
 // ---------- Backend: file JSON (chỉ dùng khi chưa cấu hình Google Sheets) ----------
@@ -101,7 +109,10 @@ async function sheetSaveCategories(categories) {
 
 // ---------- API dùng chung, server.js chỉ gọi 2 hàm dưới đây ----------
 async function listCategories() {
-  return useSheets ? sheetListCategories() : fileListCategories();
+  const list = useSheets ? await sheetListCategories() : fileListCategories();
+  // MỚI: đảm bảo mọi danh mục đều có sortMode hợp lệ, kể cả danh mục cũ/mặc định
+  // chưa từng lưu qua đường Sheets (sortMode do sheetListCategories/rowToCategory gán)
+  return list.map(c => VALID_SORT_MODES.includes(c.sortMode) ? c : { ...c, sortMode: 'manual' });
 }
 async function saveCategories(categories) {
   return useSheets ? sheetSaveCategories(categories) : fileSaveCategories(categories);
