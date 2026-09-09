@@ -679,8 +679,13 @@ async function runBulkImageImport(){
     addLog(`[${i + 1}/${entries.length}] Đang tải ảnh + tạo "${productName}"...`);
     try{
       const blob = await entry.async('blob');
+      // MỚI: JSZip trả về blob không kèm đúng kiểu file ảnh (MIME type), khiến server
+      // tưởng nhầm không phải ảnh và từ chối nhận - tự gán lại đúng kiểu theo đuôi tên ảnh
+      const ext = (entry.name.split('.').pop() || '').toLowerCase();
+      const mimeByExt = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
+      const typedBlob = new Blob([blob], { type: mimeByExt[ext] || 'image/jpeg' });
       const formData = new FormData();
-      formData.append('image', blob, entry.name.split('/').pop());
+      formData.append('image', typedBlob, entry.name.split('/').pop());
       const uploadRes = await fetch('/api/upload-image', { method: 'POST', headers: { 'x-admin-key': adminKey }, body: formData });
       if(!uploadRes.ok){ throw new Error('Tải ảnh lên thất bại'); }
       const uploadData = await uploadRes.json();
