@@ -626,9 +626,14 @@ app.post('/api/upload-image', requireAdmin, upload.single('image'), async (req, 
     return res.status(400).json({ error: 'Chưa chọn file ảnh' });
   }
   try {
+    // MỚI: ảnh HEIC (định dạng riêng của iPhone) không hiện được trên Chrome/Android -
+    // tự chuyển sang JPG ngay lúc tải lên Cloudinary để hiện đúng trên mọi thiết bị
+    const isHeic = /\.(heic|heif)$/i.test(req.file.originalname || '') || (req.file.mimetype || '').includes('heic');
+    const uploadOptions = { folder: 'giftlab-shop' };
+    if (isHeic) uploadOptions.format = 'jpg';
     const result = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
-        { folder: 'giftlab-shop' },
+        uploadOptions,
         (err, result) => err ? reject(err) : resolve(result)
       );
       stream.end(req.file.buffer);
