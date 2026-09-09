@@ -603,6 +603,114 @@ async function loadCategories(){
   if(res.ok){ categories = await res.json(); categoriesLoaded = true; }
 }
 
+// MỚI: nhập hàng loạt sản phẩm chỉ từ 1 file zip ảnh - mỗi ảnh 1 sản phẩm, dùng chung
+// giá/số lượng/cân nặng/danh mục, chạy TUẦN TỰ từng ảnh (không phải song song) để không
+// làm quá tải Cloudinary/server khi có hàng trăm ảnh; lỗi ảnh nào bỏ qua ảnh đó, không
+// dừng cả quá trình
+async function runBulkImageImport(){
+  const namePrefix = document.getElementById('bi-name-prefix').value.trim() || 'Sản phẩm';
+  const price = Number(document.getElementById('bi-price').value) || 0;
+  const stock = Number(document.getElementById('bi-stock').value) || 0;
+  const weight = document.getElementById('bi-weight').value === '' ? null : Number(document.getElementById('bi-weight').value);
+  const categoryLabel = document.getElementById('bi-category').value.trim();
+  const zipInput = document.getElementById('bi-zip-file');
+  const zipFile = zipInput.files[0];
+  const runBtn = document.getElementById('bi-run-btn');
+  const log = document.getElementById('bi-log');
+  log.style.display = 'block';
+  log.innerHTML = '';
+  const addLog = (text, color) => {
+    const line = document.createElement('div');
+    line.textContent = text;
+    if(color) line.style.color = color;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  };
+
+  if(!zipFile){ addLog('Chưa chọn file zip ảnh.', '#B23A3A'); return; }
+  if(!price){ addLog('Chưa nhập giá bán.', '#B23A3A'); return; }
+  if(typeof JSZip === 'undefined'){ addLog('Thiếu thư viện đọc file zip (JSZip) - tải lại trang rồi thử lại.', '#B23A3A'); return; }
+
+  runBtn.disabled = true;
+  addLog('Đang giải nén file zip...');
+  let zip;
+  try{
+    zip = await JSZip.loadAsync(zipFile);
+  } catch(e){
+    addLog('Không đọc được file zip, kiểm tra lại file.', '#B23A3A');
+    runBtn.disabled = false;
+    return;
+  }
+
+  const imageExt = /\.(jpe?g|png|webp|gif)$/i;
+  const entries = Object.values(zip.files)
+    .filter(f => !f.dir && !f.name.startsWith('__MACOSX') && imageExt.test(f.name))
+    .sort((a, b) => a.name.localeCompare(b.name, 'vi', { numeric: true }));
+
+  if(entries.length === 0){ addLog('Không tìm thấy ảnh nào trong file zip.', '#B23A3A'); runBtn.disabled = false; return; }
+  addLog(`Tìm thấy ${entries.length} ảnh.`);
+
+  // Resolve/tạo danh mục 1 lần trước khi chạy vòng lặp
+  let categoryKey = 'khac';
+  if(categoryLabel){
+    const existing = categories.find(c => c.label.trim().toLowerCase() === categoryLabel.toLowerCase());
+    if(existing){
+      categoryKey = existing.key;
+    } else {
+      let key = slugifyCategory(categoryLabel);
+      while(categories.some(c => c.key === key)){ key += '2'; }
+      const backup = categories.slice();
+      categories.push({ key, label: categoryLabel });
+      const ok = await saveCategoriesToServer();
+      if(!ok){ categories = backup; addLog(`Không tạo được danh mục "${categoryLabel}", dừng lại.`, '#B23A3A'); runBtn.disabled = false; return; }
+      categoryKey = key;
+      addLog(`Đã tạo danh mục mới "${categoryLabel}".`);
+    }
+  }
+
+  const padLen = String(entries.length).length < 3 ? 3 : String(entries.length).length;
+  let successCount = 0, failCount = 0;
+
+  for(let i = 0; i < entries.length; i++){
+    const entry = entries[i];
+    const num = String(i + 1).padStart(padLen, '0');
+    const productName = `${namePrefix} #${num}`;
+    const lineIndex = log.children.length;
+    addLog(`[${i + 1}/${entries.length}] Đang tải ảnh + tạo "${productName}"...`);
+    try{
+      const blob = await entry.async('blob');
+      const formData = new FormData();
+      formData.append('image', blob, entry.name.split('/').pop());
+      const uploadRes = await fetch('/api/upload-image', { method: 'POST', headers: { 'x-admin-key': adminKey }, body: formData });
+      if(!uploadRes.ok){ throw new Error('Tải ảnh lên thất bại'); }
+      const uploadData = await uploadRes.json();
+
+      const createRes = await apiFetch('/api/products', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: productName,
+          category: categoryKey,
+          image: uploadData.url,
+          variants: [{ name: null, price, stock, image: uploadData.url, weight }],
+        }),
+      });
+      if(!createRes.ok){ throw new Error('Tạo sản phẩm thất bại'); }
+
+      log.children[lineIndex].textContent = `[${i + 1}/${entries.length}] ✓ Đã tạo "${productName}"`;
+      log.children[lineIndex].style.color = 'var(--sage-deep)';
+      successCount++;
+    } catch(e){
+      log.children[lineIndex].textContent = `[${i + 1}/${entries.length}] ✗ Lỗi "${productName}" (${entry.name}): ${e.message}`;
+      log.children[lineIndex].style.color = '#B23A3A';
+      failCount++;
+    }
+  }
+
+  addLog(`Hoàn tất: ${successCount} thành công, ${failCount} lỗi.`, failCount ? '#B23A3A' : 'var(--sage-deep)');
+  runBtn.disabled = false;
+  await loadProducts();
+}
+
 function renderProducts(){
   const wrap = document.getElementById('productsTab');
   wrap.innerHTML = `
@@ -631,6 +739,37 @@ function renderProducts(){
         <div class="form-field"><label>File media_info (.xlsx)</label><input type="file" id="shopee-media-file" accept=".xlsx,.xls"></div>
         <button onclick="importShopeeProducts()">Nhập sản phẩm</button>
         <p id="shopeeImportMsg" style="font-size:13px; margin-top:8px; color:var(--sage-deep);"></p>
+      </div>
+    </div>
+
+    <!-- MỚI: nhập hàng loạt sản phẩm chỉ từ 1 file zip ảnh, dùng chung giá/số lượng/cân
+    nặng/danh mục, đặt tên tự động - dành cho lô hàng nhiều sản phẩm giống hệt nhau về
+    thông tin, chỉ khác ảnh (VD: card bài, mỗi ảnh 1 mẫu) -->
+    <div class="add-product-form">
+      ${sectionHeaderHtml('bulk-image', '🖼️ Nhập hàng loạt (chỉ ảnh)')}
+      <div id="bulk-image-body" style="${sectionBodyStyle('bulk-image')}">
+        <p style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Mỗi ảnh trong file zip tạo thành 1 sản phẩm riêng (ảnh đó dùng làm cả ảnh đại diện lẫn ảnh phân loại). Tên sản phẩm tự đặt "Tên gốc #001, #002..." theo đúng thứ tự ảnh trong zip - sửa lại tên sau trong danh sách sản phẩm.</p>
+        <div class="form-row">
+          <div class="form-field"><label>Tên gốc (VD: Check Card)</label><input id="bi-name-prefix" placeholder="Check Card"></div>
+          <div class="form-field"><label>Giá bán (áp dụng cho tất cả)</label><input id="bi-price" type="number" placeholder="200000"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-field"><label>Số lượng mỗi sản phẩm</label><input id="bi-stock" type="number" value="1"></div>
+          <div class="form-field"><label>Cân nặng (gr)</label><input id="bi-weight" type="number" value="100"></div>
+        </div>
+        <div class="form-field">
+          <label>Danh mục (gõ tên mới nếu chưa có, sẽ tự tạo)</label>
+          <input id="bi-category" list="bi-category-options" placeholder="check card">
+          <datalist id="bi-category-options">
+            ${categories.map(c => `<option value="${escapeHtml(c.label)}">`).join('')}
+          </datalist>
+        </div>
+        <div class="form-field">
+          <label>File zip ảnh</label>
+          <input type="file" id="bi-zip-file" accept=".zip">
+        </div>
+        <button onclick="runBulkImageImport()" id="bi-run-btn">Nhập hàng loạt</button>
+        <div id="bi-log" style="display:none; margin-top:10px; max-height:220px; overflow-y:auto; font-size:12px; font-family:monospace; background:#FAFAFC; border:1px solid var(--line); border-radius:8px; padding:8px;"></div>
       </div>
     </div>
 
