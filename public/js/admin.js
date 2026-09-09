@@ -844,6 +844,12 @@ function renderCategoryManageRows(){
             <button onclick="moveCategory('${c.key}','down')" ${i===categories.length-1 ? 'disabled' : ''} title="Xuống" style="padding:2px 6px; line-height:1;">▼</button>
           </div>
           <input type="text" draggable="false" value="${escapeHtml(c.label)}" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); font-size:13px;" onchange="renameCategory('${c.key}', this.value)">
+          <select onchange="setCategorySortMode('${c.key}', this.value)" title="Chế độ sắp xếp sản phẩm trong danh mục này" style="padding:8px 10px; border-radius:8px; border:1px solid var(--line); font-size:12px;">
+            <option value="manual" ${(c.sortMode||'manual')==='manual' ? 'selected' : ''}>Tự sắp thủ công</option>
+            <option value="price-asc" ${c.sortMode==='price-asc' ? 'selected' : ''}>Giá thấp → cao</option>
+            <option value="price-desc" ${c.sortMode==='price-desc' ? 'selected' : ''}>Giá cao → thấp</option>
+            <option value="name-asc" ${c.sortMode==='name-asc' ? 'selected' : ''}>Tên A → Z</option>
+          </select>
           <span style="font-size:12px; color:var(--ink-soft); white-space:nowrap;">${count} sản phẩm</span>
           <button onclick="toggleCategoryProducts('${c.key}')">${isOpen ? 'Đóng' : 'Quản lý sản phẩm'}</button>
           <button class="danger" onclick="deleteCategory('${c.key}')">Xoá</button>
@@ -852,6 +858,17 @@ function renderCategoryManageRows(){
       </div>
     `;
   }).join('');
+}
+
+// MỚI: đặt chế độ sắp xếp cố định cho 1 danh mục - "Giá thấp→cao"/"Giá cao→thấp"/"Tên A→Z"
+// sẽ tự áp dụng mãi mãi, kể cả sản phẩm thêm vào danh mục này sau này, không cần bấm lại
+async function setCategorySortMode(key, mode){
+  const backup = categories.slice();
+  const c = categories.find(c => c.key === key);
+  if(!c) return;
+  c.sortMode = mode;
+  const ok = await saveCategoriesToServer();
+  if(ok){ renderProducts(); showAdminToast('✓ Đã đổi chế độ sắp xếp danh mục'); } else { categories = backup; renderProducts(); }
 }
 
 // MỚI: kéo-thả để đổi vị trí danh mục, dùng API kéo-thả gốc của trình duyệt (không qua
@@ -916,29 +933,6 @@ const CATEGORY_PRODUCTS_PER_PAGE = 20; // MỚI
 
 // MỚI: danh sách sản phẩm trong 1 danh mục, tick chọn + chuyển hàng loạt sang danh mục khác
 // (tick chọn sản phẩm rồi "chuyển tới" = vừa thêm vào danh mục đích, vừa tự động bớt khỏi danh mục này)
-// MỚI: sắp xếp lại thứ tự hiển thị thật (theo giá/tên) cho đúng nhóm sản phẩm đang lọc
-// ở khung này - chỉ đổi vị trí TRONG nhóm đang xem, không đụng tới sản phẩm ngoài nhóm
-async function applyCategorySort(key, mode){
-  if(mode === 'default') return;
-  const q = categoryProductSearch.trim().toLowerCase();
-  const allMatching = products.filter(p =>
-    (!q || p.name.toLowerCase().includes(q)) &&
-    (categoryProductViewFilter === 'all' || p.category === categoryProductViewFilter)
-  );
-  if(allMatching.length < 2) return;
-  // Giữ nguyên đúng tập giá trị "order" hiện có của các sản phẩm này, chỉ đổi sản phẩm
-  // nào nhận giá trị nào - để không đụng tới thứ tự của sản phẩm ngoài nhóm đang lọc
-  const orderValues = allMatching.map(p => p.order).sort((a, b) => a - b);
-  const sorted = allMatching.slice();
-  if(mode === 'price-asc') sorted.sort((a, b) => a.priceMin - b.priceMin);
-  else if(mode === 'price-desc') sorted.sort((a, b) => b.priceMin - a.priceMin);
-  else if(mode === 'name-asc') sorted.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
-  const updates = sorted.map((p, i) => ({ id: p.id, order: orderValues[i] }));
-  const res = await apiFetch('/api/admin/products/reorder-bulk', { method: 'POST', body: JSON.stringify({ updates }) });
-  if(res.ok){ await loadProducts(); showAdminToast('✓ Đã sắp xếp lại thứ tự hiển thị'); }
-  else { alert('Không sắp xếp lại được, thử lại.'); }
-}
-
 function renderCategoryProductPanel(c){
   const q = categoryProductSearch.trim().toLowerCase();
   // MỚI: lọc theo tên tìm kiếm + theo danh mục đang chọn trong dropdown (categoryProductViewFilter
@@ -956,12 +950,16 @@ function renderCategoryProductPanel(c){
     // cũng phản ánh đúng qua bên đó, kể cả ngoài trang chủ)
     const prevNeighbor = i > 0 ? shown[i - 1] : null;
     const nextNeighbor = i < shown.length - 1 ? shown[i + 1] : null;
+    // MỚI: danh mục của CHÍNH sản phẩm này đang ở chế độ tự động thì khoá mũi tên lại,
+    // vì thứ tự lúc đó do giá/tên quyết định, không phải do kéo tay nữa
+    const ownCategory = categories.find(cat => cat.key === p.category);
+    const autoSorted = ownCategory && ownCategory.sortMode && ownCategory.sortMode !== 'manual';
     return `
     <label style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13px;">
       <input type="checkbox" class="cat-product-checkbox" data-id="${escapeHtml(p.id)}" ${selectedCategoryProductIds.has(p.id) ? 'checked' : ''}>
       <div style="display:flex; flex-direction:column; gap:1px;">
-        <button onclick="event.preventDefault(); event.stopPropagation(); moveProduct('${p.id}', '${prevNeighbor ? prevNeighbor.id : ''}')" ${!prevNeighbor ? 'disabled' : ''} title="Lên" style="padding:1px 5px; line-height:1;">▲</button>
-        <button onclick="event.preventDefault(); event.stopPropagation(); moveProduct('${p.id}', '${nextNeighbor ? nextNeighbor.id : ''}')" ${!nextNeighbor ? 'disabled' : ''} title="Xuống" style="padding:1px 5px; line-height:1;">▼</button>
+        <button onclick="event.preventDefault(); event.stopPropagation(); moveProduct('${p.id}', '${prevNeighbor ? prevNeighbor.id : ''}')" ${(!prevNeighbor || autoSorted) ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : 'Lên'}" style="padding:1px 5px; line-height:1;">▲</button>
+        <button onclick="event.preventDefault(); event.stopPropagation(); moveProduct('${p.id}', '${nextNeighbor ? nextNeighbor.id : ''}')" ${(!nextNeighbor || autoSorted) ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : 'Xuống'}" style="padding:1px 5px; line-height:1;">▼</button>
       </div>
       ${p.image ? `<img src="${escapeHtml(p.image)}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
       <span style="flex:1;">${escapeHtml(p.name)}</span>
@@ -988,14 +986,7 @@ function renderCategoryProductPanel(c){
         </select>
       </div>
       <div style="margin-bottom:10px;">
-        <label style="font-size:12px; color:var(--ink-soft); display:block; margin-bottom:4px;">Sắp xếp lại thứ tự hiển thị theo</label>
-        <select onchange="applyCategorySort('${c.key}', this.value)" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line); font-size:13px;">
-          <option value="default" selected>Giữ nguyên (mặc định)</option>
-          <option value="price-asc">Giá thấp → cao</option>
-          <option value="price-desc">Giá cao → thấp</option>
-          <option value="name-asc">Tên A → Z</option>
-        </select>
-        <p style="font-size:11px; color:var(--ink-soft); margin:4px 0 0;">Áp dụng ngay cho đúng ${allMatching.length} sản phẩm đang lọc ở trên, lưu luôn thành thứ tự hiển thị thật trên trang chủ.</p>
+        <p style="font-size:11px; color:var(--ink-soft); margin:0;">Chế độ sắp xếp: đặt ở dòng danh mục phía trên (đổi "Chế độ sắp xếp" của "${escapeHtml(c.label)}" sẽ áp dụng luôn, kể cả sản phẩm thêm sau này).</p>
       </div>
       <p style="font-size:12px; color:var(--ink-soft); margin-bottom:6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <span>${allMatching.length} sản phẩm khớp${categoryProductViewFilter!=='all' ? ` (đang trong "${escapeHtml(catLabel(categoryProductViewFilter))}")` : ' (tất cả danh mục)'} · Đã chọn: ${selectedCategoryProductIds.size}</span>
@@ -1446,13 +1437,16 @@ function renderProductList(){
       // MỚI: mũi tên đổi chỗ với sản phẩm liền kề TRÊN CÙNG TRANG đang xem
       const prevNeighbor = i > 0 ? pageItems[i - 1] : null;
       const nextNeighbor = i < pageItems.length - 1 ? pageItems[i + 1] : null;
-      const arrowsDisabled = anyPinned && !p.pinned;
+      // MỚI: danh mục của sản phẩm đang ở chế độ tự sắp theo giá/tên thì khoá ghim + mũi tên
+      const ownCategory = categories.find(cat => cat.key === p.category);
+      const autoSorted = ownCategory && ownCategory.sortMode && ownCategory.sortMode !== 'manual';
+      const arrowsDisabled = autoSorted || (anyPinned && !p.pinned);
       return `
       <div class="product-row" style="align-items:flex-start;">
         <input type="checkbox" ${selectedProductIds.has(p.id) ? 'checked' : ''} onchange="toggleSelectProduct('${p.id}', this.checked)" style="margin-top:12px;">
         <div style="display:flex; flex-direction:column; gap:2px; margin-top:10px;">
-          <button onclick="moveProduct('${p.id}', '${prevNeighbor ? prevNeighbor.id : ''}')" ${(!prevNeighbor || arrowsDisabled) ? 'disabled' : ''} title="Lên" style="padding:2px 6px; line-height:1;">▲</button>
-          <button onclick="moveProduct('${p.id}', '${nextNeighbor ? nextNeighbor.id : ''}')" ${(!nextNeighbor || arrowsDisabled) ? 'disabled' : ''} title="Xuống" style="padding:2px 6px; line-height:1;">▼</button>
+          <button onclick="moveProduct('${p.id}', '${prevNeighbor ? prevNeighbor.id : ''}')" ${(!prevNeighbor || arrowsDisabled) ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : 'Lên'}" style="padding:2px 6px; line-height:1;">▲</button>
+          <button onclick="moveProduct('${p.id}', '${nextNeighbor ? nextNeighbor.id : ''}')" ${(!nextNeighbor || arrowsDisabled) ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : 'Xuống'}" style="padding:2px 6px; line-height:1;">▼</button>
         </div>
         ${p.image ? `<img src="${escapeHtml(p.image)}" class="pi" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : `<div class="pi">🎁</div>`}
         <div class="pinfo">
@@ -1460,7 +1454,7 @@ function renderProductList(){
           <span>${escapeHtml(catLabel(p.category))} · ${priceLabel} · Tổng tồn: ${p.totalStock}${variants.length > 1 ? ` · ${variants.length} phân loại` : ''}${p.hidden ? ' · <span style="color:#B23A3A; font-weight:600;">🙈 Đang ẩn</span>' : ''}</span>
         </div>
         <div style="display:flex; flex-direction:column; gap:6px;">
-          <button onclick="pinProduct('${p.id}')">${p.pinned ? '📌 Bỏ ghim' : '📌 Ghim đầu'}</button>
+          <button onclick="pinProduct('${p.id}')" ${autoSorted ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : ''}">${p.pinned ? '📌 Bỏ ghim' : '📌 Ghim đầu'}</button>
           <button onclick="toggleVariantPanel('${p.id}')">${isOpen ? 'Đóng' : 'Sửa giá/kho/ảnh'}</button>
           <button onclick="toggleSharePanel('${p.id}')">${expandedShareId === p.id ? 'Đóng chia sẻ' : '🔗 Chia sẻ'}</button>
           <button onclick="duplicateProduct('${p.id}')">📄 Sao chép</button>
