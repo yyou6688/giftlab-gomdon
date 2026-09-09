@@ -689,11 +689,18 @@ function cartKey(id, variantIndex){ return `${id}::${variantIndex}`; }
 // tục xem/thêm sản phẩm khác thoải mái, khi nào muốn thanh toán tự bấm vào icon giỏ hàng
 function addToCart(id, variantIndex){
   const key = cartKey(id, variantIndex);
+  const p = products.find(x => x.id === id);
+  const variant = p ? getVariants(p)[variantIndex] : null;
+  const stock = variant ? variant.stock : Infinity;
+  // MỚI: không cho thêm quá số lượng đang có trong kho
+  if((cart[key]||0) >= stock){
+    showAddedToast(`Kho chỉ còn ${stock} sản phẩm, không thêm được nữa`);
+    return;
+  }
   cart[key] = (cart[key]||0) + 1;
   selectedCartKeys.add(key); // MỚI: sản phẩm vừa thêm mặc định được tick chọn sẵn
   saveCart();
   updateCartUI();
-  const p = products.find(x => x.id === id);
   showAddedToast(p ? `✓ Đã thêm "${p.name}" vào giỏ hàng` : '✓ Đã thêm vào giỏ hàng');
 }
 
@@ -721,6 +728,16 @@ function selectVariantAndClose(id, variantIndex){
 
 function changeQty(id, variantIndex, delta){
   const key = cartKey(id, variantIndex);
+  // MỚI: không cho tăng quá số lượng đang có trong kho
+  if(delta > 0){
+    const p = products.find(x => x.id === id);
+    const variant = p ? getVariants(p)[variantIndex] : null;
+    const stock = variant ? variant.stock : Infinity;
+    if((cart[key]||0) >= stock){
+      showAddedToast(`Kho chỉ còn ${stock} sản phẩm, không thêm được nữa`);
+      return;
+    }
+  }
   cart[key] = (cart[key]||0) + delta;
   if(cart[key] <= 0){ delete cart[key]; selectedCartKeys.delete(key); } // MỚI: bỏ tick nếu xoá hẳn
   saveCart();
@@ -799,6 +816,26 @@ function variantPriceHtml(productId, variantIndex, basePrice){
   return `<span class="card-price-old" style="font-size:12px;">${fmt(vp.originalPrice)}</span> ${fmt(vp.discountedPrice)}${pendingNote}`;
 }
 
+// MỚI: bấm vào ảnh phân loại (SKU) để xem phóng to, không làm chọn nhầm phân loại đó
+function openImageZoom(e, url){
+  e.stopPropagation();
+  let overlay = document.getElementById('imageZoomOverlay');
+  if(!overlay){
+    overlay = document.createElement('div');
+    overlay.id = 'imageZoomOverlay';
+    overlay.className = 'image-zoom-overlay';
+    overlay.onclick = closeImageZoom;
+    overlay.innerHTML = '<img id="imageZoomImg" alt="">';
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('imageZoomImg').src = url;
+  overlay.classList.add('show');
+}
+function closeImageZoom(){
+  const overlay = document.getElementById('imageZoomOverlay');
+  if(overlay) overlay.classList.remove('show');
+}
+
 function renderVariantPicker(){
   const p = variantPickerProduct;
   const title = document.getElementById('drawerTitle');
@@ -808,7 +845,7 @@ function renderVariantPicker(){
   const rows = getVariants(p).map((v, idx) => `
     <div class="variant-row ${v.stock<=0 ? 'disabled' : ''}" onclick="selectVariantAndClose('${p.id}', ${idx})">
       <div style="display:flex; align-items:center; gap:10px;">
-        ${v.image ? `<img src="${v.image}" alt="" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;">` : ''}
+        ${v.image ? `<img src="${v.image}" alt="" onclick="openImageZoom(event, '${v.image}')" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
         <div>
           <div class="vname">${v.name || 'Mặc định'}</div>
           <div class="vmeta">${v.stock>0 ? 'Còn ' + v.stock : 'Hết hàng'}</div>
@@ -866,7 +903,7 @@ function renderProductDetail(){
   const variantsHtml = variants.map((v, idx) => `
     <div class="variant-row ${v.stock<=0 ? 'disabled' : ''}" onclick="addToCartFromDetail('${p.id}', ${idx})">
       <div style="display:flex; align-items:center; gap:10px;">
-        ${v.image ? `<img src="${v.image}" alt="" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;">` : ''}
+        ${v.image ? `<img src="${v.image}" alt="" onclick="openImageZoom(event, '${v.image}')" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
         <div>
           <div class="vname">${v.name || 'Mặc định'}</div>
           <div class="vmeta">${v.stock>0 ? 'Còn ' + v.stock : 'Hết hàng'}</div>
@@ -1427,7 +1464,7 @@ function renderDrawer(){
       <div class="li-qty">
         <button class="qty-btn" onclick="changeQty('${e.p.id}', ${e.variantIndex}, -1)">−</button>
         <div class="qty-val">${e.qty}</div>
-        <button class="qty-btn" onclick="changeQty('${e.p.id}', ${e.variantIndex}, 1)">+</button>
+        <button class="qty-btn" onclick="changeQty('${e.p.id}', ${e.variantIndex}, 1)" ${e.qty >= e.variant.stock ? 'disabled' : ''}>+</button>
       </div>
     </div>
   `;
