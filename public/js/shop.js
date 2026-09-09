@@ -939,17 +939,41 @@ function closeProductDetail(pushUrl){
   }
 }
 
+// MỚI: lấy danh sách ảnh của trang chi tiết sản phẩm (ảnh chính + các ảnh chi tiết khác)
+function getDetailGallery(p){
+  return [p.image, ...(p.detailImages || [])].filter(Boolean);
+}
+
+// MỚI: chuyển ảnh chính (trái/phải) trong trang chi tiết sản phẩm - dùng cho
+// nút mũi tên (tablet/máy tính) và vuốt (điện thoại)
+function navDetailImage(delta){
+  const p = currentDetailProduct;
+  if (!p) return;
+  const gallery = getDetailGallery(p);
+  if (gallery.length < 2) return;
+  detailMainImageIndex = (detailMainImageIndex + delta + gallery.length) % gallery.length;
+  renderProductDetail();
+}
+
 function renderProductDetail(){
   const p = currentDetailProduct;
   if (!p) return;
   const panel = document.getElementById('productDetailPanel');
   const variants = getVariants(p);
-  const gallery = [p.image, ...(p.detailImages || [])].filter(Boolean);
+  const gallery = getDetailGallery(p);
   const mainImg = gallery[detailMainImageIndex] || gallery[0] || '';
+  const multiImg = gallery.length > 1;
 
   const thumbsHtml = gallery.map((img, idx) => `
     <img src="${img}" class="detail-thumb ${idx === detailMainImageIndex ? 'active' : ''}" onclick="detailMainImageIndex=${idx}; renderProductDetail();">
   `).join('');
+
+  // Nút mũi tên (tự ẩn trên điện thoại qua CSS, chỉ vuốt) + chấm tròn báo vị trí ảnh
+  const navBtnsHtml = multiImg ? `
+    <button type="button" class="detail-nav-btn detail-nav-prev" onclick="event.stopPropagation(); navDetailImage(-1);">‹</button>
+    <button type="button" class="detail-nav-btn detail-nav-next" onclick="event.stopPropagation(); navDetailImage(1);">›</button>
+    <div class="detail-img-dots">${gallery.map((_, i) => `<span class="detail-img-dot ${i===detailMainImageIndex ? 'active' : ''}"></span>`).join('')}</div>
+  ` : '';
 
   const variantZoomGallery = variants.map(v => v.image).filter(Boolean);
   currentZoomGallery = variantZoomGallery;
@@ -969,7 +993,7 @@ function renderProductDetail(){
   panel.innerHTML = `
     <div class="product-detail-close" onclick="closeProductDetail(true)">✕</div>
     <div class="detail-gallery">
-      <div class="detail-main-img">${mainImg ? `<img src="${mainImg}" alt="${p.name}">` : '🎁'}</div>
+      <div class="detail-main-img">${mainImg ? `<img src="${mainImg}" alt="${p.name}">` : '🎁'}${navBtnsHtml}</div>
       ${gallery.length > 1 ? `<div class="detail-thumbs">${thumbsHtml}</div>` : ''}
     </div>
     <div class="detail-info">
@@ -986,6 +1010,24 @@ function addToCartFromDetail(id, variantIndex){
   closeProductDetail(true);
   addToCart(id, variantIndex);
 }
+
+// Vuốt trái/phải trên ảnh chính của trang chi tiết sản phẩm để chuyển ảnh
+// (gắn 1 lần trên panel tĩnh vì nội dung bên trong bị vẽ lại mỗi lần renderProductDetail)
+(function initDetailImageSwipe(){
+  const panel = document.getElementById('productDetailPanel');
+  if (!panel) return;
+  let touchStartX = null;
+  panel.addEventListener('touchstart', (e) => {
+    if (!e.target.closest('.detail-main-img')) { touchStartX = null; return; }
+    touchStartX = e.touches[0].clientX;
+  });
+  panel.addEventListener('touchend', (e) => {
+    if (touchStartX === null) return;
+    const delta = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(delta) > 40) navDetailImage(delta > 0 ? -1 : 1);
+    touchStartX = null;
+  });
+})();
 
 // Nút back của trình duyệt / bấm link chia sẻ trực tiếp -> tự mở đúng sản phẩm
 window.addEventListener('popstate', () => {
