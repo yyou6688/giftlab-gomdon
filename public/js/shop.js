@@ -817,24 +817,73 @@ function variantPriceHtml(productId, variantIndex, basePrice){
 }
 
 // MỚI: bấm vào ảnh phân loại (SKU) để xem phóng to, không làm chọn nhầm phân loại đó
-function openImageZoom(e, url){
+// MỚI: bấm vào ảnh phân loại (SKU) để xem phóng to, có thể chuyển qua lại giữa các ảnh
+// phân loại khác của cùng sản phẩm - máy tính dùng phím ←/→ hoặc nút mũi tên, điện
+// thoại/tablet vuốt trái/phải ngay trên ảnh
+let currentZoomGallery = [];
+let currentZoomIndex = 0;
+
+function openImageZoom(e, index){
   e.stopPropagation();
-  let overlay = document.getElementById('imageZoomOverlay');
-  if(!overlay){
-    overlay = document.createElement('div');
-    overlay.id = 'imageZoomOverlay';
-    overlay.className = 'image-zoom-overlay';
-    overlay.onclick = closeImageZoom;
-    overlay.innerHTML = '<img id="imageZoomImg" alt="">';
-    document.body.appendChild(overlay);
-  }
-  document.getElementById('imageZoomImg').src = url;
-  overlay.classList.add('show');
+  currentZoomIndex = index;
+  ensureImageZoomOverlay();
+  renderImageZoom();
+  document.getElementById('imageZoomOverlay').classList.add('show');
 }
 function closeImageZoom(){
   const overlay = document.getElementById('imageZoomOverlay');
   if(overlay) overlay.classList.remove('show');
 }
+function navImageZoom(delta){
+  if(currentZoomGallery.length < 2) return;
+  currentZoomIndex = (currentZoomIndex + delta + currentZoomGallery.length) % currentZoomGallery.length;
+  renderImageZoom();
+}
+function renderImageZoom(){
+  const img = document.getElementById('imageZoomImg');
+  if(img) img.src = currentZoomGallery[currentZoomIndex] || '';
+  const multi = currentZoomGallery.length > 1;
+  const prevBtn = document.getElementById('imageZoomPrev');
+  const nextBtn = document.getElementById('imageZoomNext');
+  if(prevBtn) prevBtn.style.display = multi ? 'flex' : 'none';
+  if(nextBtn) nextBtn.style.display = multi ? 'flex' : 'none';
+  const dots = document.getElementById('imageZoomDots');
+  if(dots){
+    dots.style.display = multi ? 'flex' : 'none';
+    dots.innerHTML = currentZoomGallery.map((_, i) => `<span class="image-zoom-dot ${i===currentZoomIndex ? 'active' : ''}"></span>`).join('');
+  }
+}
+function ensureImageZoomOverlay(){
+  if(document.getElementById('imageZoomOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'imageZoomOverlay';
+  overlay.className = 'image-zoom-overlay';
+  overlay.innerHTML = `
+    <button id="imageZoomPrev" class="image-zoom-nav-btn" style="left:16px;" onclick="event.stopPropagation(); navImageZoom(-1);">‹</button>
+    <img id="imageZoomImg" alt="">
+    <button id="imageZoomNext" class="image-zoom-nav-btn" style="right:16px;" onclick="event.stopPropagation(); navImageZoom(1);">›</button>
+    <div id="imageZoomDots" class="image-zoom-dots"></div>
+  `;
+  overlay.addEventListener('click', (e) => { if(e.target === overlay) closeImageZoom(); });
+  // Vuốt trái/phải trên điện thoại/tablet để chuyển ảnh
+  let touchStartX = null;
+  overlay.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  overlay.addEventListener('touchend', (e) => {
+    if(touchStartX === null) return;
+    const delta = e.changedTouches[0].clientX - touchStartX;
+    if(Math.abs(delta) > 40) navImageZoom(delta > 0 ? -1 : 1);
+    touchStartX = null;
+  });
+  document.body.appendChild(overlay);
+}
+// Phím ←/→ để chuyển ảnh, Esc để đóng - chỉ hoạt động khi khay đang mở
+document.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('imageZoomOverlay');
+  if(!overlay || !overlay.classList.contains('show')) return;
+  if(e.key === 'ArrowLeft') navImageZoom(-1);
+  else if(e.key === 'ArrowRight') navImageZoom(1);
+  else if(e.key === 'Escape') closeImageZoom();
+});
 
 function renderVariantPicker(){
   const p = variantPickerProduct;
@@ -842,10 +891,12 @@ function renderVariantPicker(){
   const list = document.getElementById('drawerList');
   title.textContent = 'Chọn phân loại';
   const imgTag = p.image ? `<div class="product-detail-img"><img src="${p.image}" alt="${p.name}"></div>` : '';
+  const zoomGallery = getVariants(p).map(v => v.image).filter(Boolean);
+  currentZoomGallery = zoomGallery;
   const rows = getVariants(p).map((v, idx) => `
     <div class="variant-row ${v.stock<=0 ? 'disabled' : ''}" onclick="selectVariantAndClose('${p.id}', ${idx})">
       <div style="display:flex; align-items:center; gap:10px;">
-        ${v.image ? `<img src="${v.image}" alt="" onclick="openImageZoom(event, '${v.image}')" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
+        ${v.image ? `<img src="${v.image}" alt="" onclick="openImageZoom(event, ${zoomGallery.indexOf(v.image)})" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
         <div>
           <div class="vname">${v.name || 'Mặc định'}</div>
           <div class="vmeta">${v.stock>0 ? 'Còn ' + v.stock : 'Hết hàng'}</div>
@@ -900,10 +951,12 @@ function renderProductDetail(){
     <img src="${img}" class="detail-thumb ${idx === detailMainImageIndex ? 'active' : ''}" onclick="detailMainImageIndex=${idx}; renderProductDetail();">
   `).join('');
 
+  const variantZoomGallery = variants.map(v => v.image).filter(Boolean);
+  currentZoomGallery = variantZoomGallery;
   const variantsHtml = variants.map((v, idx) => `
     <div class="variant-row ${v.stock<=0 ? 'disabled' : ''}" onclick="addToCartFromDetail('${p.id}', ${idx})">
       <div style="display:flex; align-items:center; gap:10px;">
-        ${v.image ? `<img src="${v.image}" alt="" onclick="openImageZoom(event, '${v.image}')" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
+        ${v.image ? `<img src="${v.image}" alt="" onclick="openImageZoom(event, ${variantZoomGallery.indexOf(v.image)})" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
         <div>
           <div class="vname">${v.name || 'Mặc định'}</div>
           <div class="vmeta">${v.stock>0 ? 'Còn ' + v.stock : 'Hết hàng'}</div>
