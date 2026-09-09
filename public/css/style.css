@@ -322,11 +322,36 @@ img{ max-width:100%; display:block; }
   justify-content:center; cursor:pointer; font-size:16px; z-index:2;
 }
 .detail-main-img{
+  position:relative;
   aspect-ratio:1/1; border-radius:16px; overflow:hidden;
   background: linear-gradient(135deg, #EDE8FA, #F6E8F7);
   display:flex; align-items:center; justify-content:center; font-size:52px;
+  touch-action: pan-y;
 }
 .detail-main-img img{ width:100%; height:100%; object-fit:cover; }
+
+/* MỚI: nút điều hướng trái/phải trên ảnh chính trang chi tiết sản phẩm.
+   Tablet/máy tính hiện nút như bình thường; điện thoại tự ẩn nút, chỉ
+   dùng vuốt để đỡ bấm nhầm vào ảnh nhỏ (xem @media bên dưới). */
+.detail-nav-btn{
+  position:absolute; top:50%; transform:translateY(-50%);
+  width:36px; height:36px; border-radius:999px;
+  background:rgba(20,16,28,0.38); color:#fff; border:none;
+  font-size:20px; line-height:1; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; z-index:2;
+}
+.detail-nav-btn:hover{ background:rgba(20,16,28,0.55); }
+.detail-nav-prev{ left:10px; }
+.detail-nav-next{ right:10px; }
+.detail-img-dots{
+  position:absolute; bottom:10px; left:50%; transform:translateX(-50%);
+  display:flex; gap:6px; z-index:2;
+}
+.detail-img-dot{ width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,0.55); }
+.detail-img-dot.active{ background:#fff; }
+@media (max-width: 639px){
+  .detail-nav-btn{ display:none !important; } /* điện thoại chỉ dùng vuốt, nút mũi tên dễ bấm nhầm vào ảnh nhỏ */
+}
 .detail-thumbs{ display:flex; gap:8px; margin-top:10px; overflow-x:auto; }
 .detail-thumb{
   width:56px; height:56px; border-radius:10px; object-fit:cover; cursor:pointer;
