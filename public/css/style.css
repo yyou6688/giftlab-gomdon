@@ -692,6 +692,23 @@ button.danger{
   border-radius: 16px;
   box-shadow: 0 20px 50px rgba(0,0,0,0.4);
 }
+.image-zoom-nav-btn{
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border-radius: 999px;
+  background: rgba(255,255,255,0.15); color: #fff; border: none;
+  font-size: 22px; line-height: 1; cursor: pointer;
+  display: none; align-items: center; justify-content: center;
+}
+.image-zoom-nav-btn:hover{ background: rgba(255,255,255,0.28); }
+.image-zoom-dots{
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  display: none; gap: 6px;
+}
+.image-zoom-dot{ width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.4); }
+.image-zoom-dot.active{ background: #fff; }
+@media (max-width: 639px){
+  .image-zoom-nav-btn{ display: none !important; } /* trên điện thoại chỉ dùng vuốt, nút mũi tên dễ bấm nhầm vào ảnh nhỏ */
+}
 
 /* ============================================================
    MỚI: Nút nổi "Quay lại danh mục" — chỉ hiện trên mobile/tablet
