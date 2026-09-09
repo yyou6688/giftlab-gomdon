@@ -395,14 +395,22 @@ function renderGrid(){
   );
   // MỚI: sản phẩm hết hàng luôn dồn xuống cuối TOÀN TRANG trước tiên (không theo từng
   // khối danh mục); trong số còn hàng, gom theo đúng khối danh mục - thứ tự khối lấy
-  // đúng thứ tự đang sắp ở "Quản lý danh mục" bên trang quản trị; trong từng khối vẫn
-  // giữ nguyên đúng thứ tự sản phẩm (ghim/mũi tên) đã cài đặt sẵn
+  // đúng thứ tự đang sắp ở "Quản lý danh mục" bên trang quản trị; trong từng khối, nếu
+  // danh mục đó đang đặt "Chế độ sắp xếp" tự động (giá/tên) thì luôn sắp theo đúng chế độ
+  // đó - kể cả sản phẩm mới thêm vào sau này, không cần thao tác gì thêm; còn lại (chế độ
+  // "Tự sắp thủ công") thì giữ nguyên đúng thứ tự ghim/mũi tên đã cài đặt sẵn
   const categoryRank = new Map(categoriesList.map((c, i) => [c.key, i]));
+  const categorySortMode = new Map(categoriesList.map(c => [c.key, c.sortMode || 'manual']));
   items.sort((a, b) => {
     const stockDiff = (a.totalStock <= 0 ? 1 : 0) - (b.totalStock <= 0 ? 1 : 0);
     if(stockDiff !== 0) return stockDiff;
     const catDiff = (categoryRank.get(a.category) ?? 999) - (categoryRank.get(b.category) ?? 999);
-    return catDiff;
+    if(catDiff !== 0) return catDiff;
+    const mode = categorySortMode.get(a.category) || 'manual';
+    if(mode === 'price-asc') return a.priceMin - b.priceMin;
+    if(mode === 'price-desc') return b.priceMin - a.priceMin;
+    if(mode === 'name-asc') return a.name.localeCompare(b.name, 'vi');
+    return 0;
   });
   // MỚI: hiện nút "Xem tất cả" khi đang lọc danh mục hoặc đang tìm kiếm
   const resetLink = document.getElementById('resetFilterLink');
