@@ -84,6 +84,7 @@ let flashSaleProductSearch = '';       // tìm sản phẩm để thêm vào ch�
 let flashSaleProductCategoryFilter = 'all'; // lọc theo danh mục khi tìm sản phẩm thêm vào
 let flashSaleExpandedSkuProductId = null;   // sản phẩm đang mở để sửa từng SKU riêng
 let flashSaleSelectedProductIds = new Set(); // sản phẩm đang tick chọn để thêm vào chương trình đang mở
+let orderAutomationSettings = { autoCancelUnpaidEnabled: true }; // MỚI: bật/tắt tự động huỷ đơn chưa thanh toán
 
 const STATUS_LABEL = {
   moi: 'Mới',
@@ -116,6 +117,47 @@ function escapeHtml(str){
 
 function fmt(n){ return n.toLocaleString('vi-VN') + 'đ'; }
 
+// MỚI: tải cấu hình bật/tắt tự động huỷ đơn chưa thanh toán (gọi 1 lần lúc vào trang)
+async function loadOrderAutomationSettings(){
+  try{
+    const res = await fetch('/api/order-automation');
+    if(res.ok) orderAutomationSettings = await res.json();
+  } catch(e){ /* giữ nguyên giá trị mặc định nếu lỗi mạng */ }
+  renderOrders();
+}
+// MỚI: admin bấm công tắc bật/tắt ở tab Đơn hàng
+async function toggleAutoCancelUnpaid(enabled){
+  const res = await apiFetch('/api/order-automation', {
+    method: 'PATCH', body: JSON.stringify({ autoCancelUnpaidEnabled: enabled })
+  });
+  if(res.ok){
+    orderAutomationSettings = await res.json();
+    showAdminToast(enabled ? '✅ Đã BẬT tự động huỷ đơn chưa thanh toán' : '✅ Đã TẮT tự động huỷ đơn chưa thanh toán');
+    renderOrders();
+  } else {
+    alert('Không lưu được cấu hình, thử lại.');
+  }
+}
+
+// MỚI: đếm ngược thời gian còn lại trước khi đơn CHƯA THANH TOÁN bị tự động huỷ (1 tiếng
+// kể từ lúc đặt) - chạy 1 lần duy nhất, tự cập nhật MỌI thẻ .order-countdown đang có trên
+// trang mỗi giây (không cần render lại toàn bộ danh sách đơn)
+function formatCountdownRemain(ms){
+  if(ms <= 0) return '0 phút';
+  const totalMin = Math.floor(ms / 60000);
+  if(totalMin >= 60) return `${Math.floor(totalMin/60)} giờ ${totalMin%60} phút`;
+  const mm = String(totalMin).padStart(2,'0');
+  const ss = String(Math.floor((ms % 60000)/1000)).padStart(2,'0');
+  return `${mm}:${ss}`;
+}
+setInterval(() => {
+  document.querySelectorAll('.order-countdown').forEach(el => {
+    const deadline = new Date(el.dataset.created).getTime() + 60*60*1000;
+    const remain = deadline - Date.now();
+    el.textContent = remain > 0 ? `⏰ Tự huỷ sau ${formatCountdownRemain(remain)}` : '⏰ Đang chờ tự huỷ...';
+  });
+}, 1000);
+
 // MỚI: lấy ảnh SKU của 1 dòng sản phẩm trong đơn hàng, để hiển thị trong tab Đơn hàng.
 // Đơn hàng đặt mới sẽ có sẵn it.image (lưu tại thời điểm đặt). Với đơn cũ đặt trước khi
 // có tính năng này (chưa lưu it.image), dò lại theo sản phẩm/SKU hiện tại trong danh
@@ -146,6 +188,7 @@ async function login(){
       document.getElementById('loginView').style.display = 'none';
       document.getElementById('adminView').style.display = 'block';
       loadProducts();
+      loadOrderAutomationSettings(); // MỚI
     } else {
       errEl.textContent = 'Sai mật khẩu, thử lại.';
     }
@@ -242,6 +285,15 @@ function renderOrders(){
   const allSelected = filtered.length > 0 && filtered.every(o => selectedOrderIds.has(o.id));
 
   const filterBar = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#fff; border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:10px;">
+      <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+        <input type="checkbox" ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'checked' : ''} onchange="toggleAutoCancelUnpaid(this.checked)">
+        ⏰ Tự động huỷ đơn chưa thanh toán sau 1 giờ
+      </label>
+      <span style="font-size:12px; color:${orderAutomationSettings.autoCancelUnpaidEnabled ? '#2E7D46' : '#C0392B'}; font-weight:700;">
+        ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'ĐANG BẬT' : 'ĐANG TẮT — cần tự tick "Đã nhận tiền" bằng tay'}
+      </span>
+    </div>
     <div class="form-row" style="margin-bottom:14px;">
       <div class="form-field">
         <input id="orderPhoneFilterInput" placeholder="Tìm theo số điện thoại..." value="${orderPhoneFilter}" oninput="orderPhoneFilter=this.value; renderOrders();">
@@ -307,6 +359,7 @@ function renderOrders(){
         ${!o.trackingCode ? `<button onclick="toggleAddressEdit(${o.id})" style="font-size:11px; padding:3px 8px; margin-left:6px;">${expandedAddressEditId===o.id ? 'Đóng' : 'Sửa địa chỉ'}</button>` : ' <span style="color:var(--ink-soft);">(đã có mã vận đơn, không sửa được)</span>'}
         <br>
         ${new Date(o.createdAt).toLocaleString('vi-VN')}
+        ${(orderAutomationSettings.autoCancelUnpaidEnabled && !o.paid && o.status !== 'huy' && !o.trackingCode) ? ` · <span class="order-countdown" data-created="${o.createdAt}" style="color:#C0392B; font-weight:700;"></span>` : ''}
         ${o.note ? `<br>Ghi chú: ${escapeHtml(o.note)}` : ''}
       </div>
       ${expandedAddressEditId===o.id ? renderAddressEditForm(o) : ''}
@@ -3446,6 +3499,7 @@ if(adminKey){
       document.getElementById('loginView').style.display = 'none';
       document.getElementById('adminView').style.display = 'block';
       loadProducts();
+      loadOrderAutomationSettings(); // MỚI
     }
   });
 }
