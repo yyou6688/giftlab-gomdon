@@ -96,11 +96,26 @@ async function sheetSavePromotions(promotions) {
 }
 
 // ---------- API dùng chung ----------
+// MỚI: cache tạm 15 giây trong bộ nhớ - trang chủ cứ 20 giây tự gọi lại API này 1 lần,
+// nếu gọi thẳng Google Sheets mỗi lần thì chỉ cần vài khách mở web cùng lúc là vượt
+// quota đọc của Google (gây lỗi "Quota exceeded" tràn log). Cache ngắn để admin sửa
+// khuyến mãi vẫn thấy hiệu lực gần như ngay (chờ tối đa 15 giây).
+let promotionsCache = null;
+let promotionsCacheAt = 0;
+const PROMOTIONS_CACHE_TTL_MS = 15000;
 async function listPromotions() {
-  return useSheets ? sheetListPromotions() : fileListPromotions();
+  if (!useSheets) return fileListPromotions();
+  const now = Date.now();
+  if (promotionsCache && (now - promotionsCacheAt) < PROMOTIONS_CACHE_TTL_MS) return promotionsCache;
+  const data = await sheetListPromotions();
+  promotionsCache = data;
+  promotionsCacheAt = now;
+  return data;
 }
 async function savePromotions(promotions) {
-  return useSheets ? sheetSavePromotions(promotions) : fileSavePromotions(promotions);
+  const result = await (useSheets ? sheetSavePromotions(promotions) : fileSavePromotions(promotions));
+  promotionsCache = null; // MỚI: vừa lưu xong - xoá cache để lần đọc kế tiếp lấy đúng dữ liệu mới ngay
+  return result;
 }
 
 module.exports = { listPromotions, savePromotions, useSheets };
