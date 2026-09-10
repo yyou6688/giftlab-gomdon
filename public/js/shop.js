@@ -15,6 +15,7 @@ let categoriesList = []; // MỚI: danh sách danh mục cho sidebar desktop
 let promotions = []; // MỚI: các chương trình khuyến mãi ĐANG DIỄN RA (đã tính sẵn giá giảm)
 let flashSales = []; // MỚI: các chương trình Flash Sale ĐANG CHO HIỂN THỊ (kể cả chưa tới giờ bắt đầu)
 let policiesContent = null; // MỚI: nội dung 5 trang chính sách, hiện ở cuối trang chủ
+let orderAutomationEnabled = true; // MỚI: admin có thể tạm tắt tự động huỷ đơn chưa thanh toán
 let siteSearchQuery = ''; // MỚI: từ khoá tìm kiếm sản phẩm
 let wantGiftWrap = false;  // MỚI: khách có chọn gói quà tặng lúc checkout không
 let selectedAddOnIds = new Set(); // MỚI: các dịch vụ/sản phẩm kèm thêm khách đã tick
@@ -25,6 +26,7 @@ let selectedCartKeys = new Set(Object.keys(cart)); // MỚI: mặc định tick 
 let drawerView = 'cart';
 let variantPickerProduct = null;
 let lastOrder = null;
+let pendingOrderReminder = null; // MỚI: đơn chưa thanh toán gần nhất (đọc lại từ localStorage lúc tải trang)
 let lookupPhone = '';          // MỚI: lưu lại SĐT vừa tra cứu để bấm vào 1 đơn trong danh sách
 let lookupOrderList = [];      // MỚI: danh sách đơn khi tra cứu chỉ bằng SĐT
 let lookupOrderResult = null;
@@ -156,7 +158,7 @@ function getEffectivePriceRange(p){
 
 // ---------- Tải sản phẩm từ server ----------
 async function loadProducts(){
-  const [productsRes, shippingRes, homepageRes, addressRes, categoriesRes, promotionsRes, flashSalesRes, policiesRes] = await Promise.all([
+  const [productsRes, shippingRes, homepageRes, addressRes, categoriesRes, promotionsRes, flashSalesRes, policiesRes, orderAutomationRes] = await Promise.all([
     fetch('/api/products'),
     fetch('/api/shipping-config').catch(() => null),
     fetch('/api/homepage-content').catch(() => null),
@@ -164,7 +166,8 @@ async function loadProducts(){
     fetch('/api/categories').catch(() => null), // MỚI: danh sách danh mục cho sidebar desktop
     fetch('/api/promotions').catch(() => null), // MỚI: chương trình khuyến mãi đang diễn ra
     fetch('/api/flash-sales').catch(() => null), // MỚI: chương trình Flash Sale (kể cả chưa tới giờ)
-    fetch('/api/policies').catch(() => null) // MỚI: nội dung chính sách hiện ở cuối trang chủ
+    fetch('/api/policies').catch(() => null), // MỚI: nội dung chính sách hiện ở cuối trang chủ
+    fetch('/api/order-automation').catch(() => null) // MỚI: admin có đang bật tự động huỷ đơn chưa thanh toán không
   ]);
   products = await productsRes.json();
   if(shippingRes && shippingRes.ok){
@@ -187,6 +190,10 @@ async function loadProducts(){
   }
   if(policiesRes && policiesRes.ok){
     policiesContent = await policiesRes.json();
+  }
+  if(orderAutomationRes && orderAutomationRes.ok){
+    const settings = await orderAutomationRes.json();
+    orderAutomationEnabled = settings.autoCancelUnpaidEnabled !== false;
   }
   renderGrid();
   renderHeroSlide();   // MỚI
@@ -1303,17 +1310,20 @@ function renderLookupResult(){
     </div>
   ` : '';
 
-  // MỚI: nếu đơn chưa thanh toán, hiện lại mã QR để khách chuyển khoản
+  // MỚI: nếu đơn chưa thanh toán, hiện lại mã QR để khách chuyển khoản - đặt LÊN ĐẦU
+  // trang để khách thấy ngay, không phải cuộn xuống mới thấy
   const qrBlock = (!o.paid && o.qrUrl) ? `
     <div class="qr-box">
       <p style="font-weight:700; margin-bottom:10px;">Chưa nhận được thanh toán cho đơn này</p>
       <img src="${o.qrUrl}" alt="Mã QR chuyển khoản" class="qr-img">
       <p class="qr-note">Quét mã để chuyển khoản đúng số tiền ${fmt(o.dueAmount != null ? o.dueAmount : (o.grandTotal || o.total))}${o.codShipping ? ' (chưa gồm phí ship — phần này sẽ thu khi giao hàng)' : ''}.</p>
+      ${orderAutomationEnabled ? `<p class="countdown-text" id="orderCountdownLookup"></p>` : ''}
     </div>
   ` : '';
 
   list.innerHTML = `
     <div class="back-link" onclick="openLookup()">← Tra cứu đơn khác</div>
+    ${qrBlock}
     <div class="foot-row"><span>Trạng thái</span><b>${STATUS_LABEL[o.status] || o.status}</b></div>
     <div class="foot-row"><span>Thanh toán</span><b>${o.paid ? 'Đã nhận tiền' : 'Chưa thanh toán'}</b></div>
     ${modifyActionsBlock}
@@ -1325,8 +1335,11 @@ function renderLookupResult(){
     ${(o.addOns && o.addOns.length) ? `<div class="foot-row"><span>🧩 ${o.addOns.map(a => a.label).join(', ')}</span><b>${fmt(o.addOnsFee || 0)}</b></div>` : ''}
     <div class="foot-row"><span>Tổng cộng</span><b>${fmt(o.grandTotal || o.total)}</b></div>
     ${shippingInfoBlock}
-    ${qrBlock}
   `;
+  // MỚI: bắt đầu đếm ngược nếu đơn chưa thanh toán VÀ tính năng tự huỷ đang bật,
+  // dừng đếm nếu đã thanh toán/đổi màn hình/tính năng đang tắt
+  if(orderAutomationEnabled && !o.paid && o.qrUrl){ startOrderCountdown(o.createdAt, 'orderCountdownLookup'); }
+  else { clearInterval(orderCountdownTimer); }
 }
 
 // MỚI: khách tự huỷ đơn - chỉ hiện khi đơn CHƯA có mã vận đơn (server tự kiểm tra lại)
@@ -1342,6 +1355,8 @@ async function cancelMyOrder(){
     const data = await res.json();
     if(!res.ok){ alert(data.error || 'Không huỷ được đơn hàng.'); return; }
     lookupOrderResult = data;
+    // MỚI: vừa tự huỷ đơn - nếu đây đúng là đơn đang được nhắc nổi thì xoá nhắc nhở luôn
+    if(pendingOrderReminder && pendingOrderReminder.id === o.id) clearPendingOrderReminder();
     renderDrawer();
   } catch(e){ alert('Không kết nối được tới server, thử lại.'); }
 }
@@ -1422,6 +1437,85 @@ async function submitEditAddress(){
 }
 
 // ---------- Vẽ nội dung khay ----------
+// MỚI: đếm ngược thời gian còn lại trước khi đơn CHƯA THANH TOÁN bị tự động huỷ (1 tiếng
+// kể từ lúc đặt) - dùng chung cho màn "Đặt hàng thành công" và màn tra cứu đơn hàng
+let orderCountdownTimer = null;
+function formatCountdownRemain(ms){
+  if(ms <= 0) return '0 phút';
+  const totalMin = Math.floor(ms / 60000);
+  if(totalMin >= 60) return `${Math.floor(totalMin/60)} giờ ${totalMin%60} phút`;
+  const mm = String(totalMin).padStart(2,'0');
+  const ss = String(Math.floor((ms % 60000)/1000)).padStart(2,'0');
+  return `${mm}:${ss}`;
+}
+function startOrderCountdown(createdAt, elId){
+  clearInterval(orderCountdownTimer);
+  const deadline = new Date(createdAt).getTime() + 60*60*1000;
+  function tick(){
+    const el = document.getElementById(elId);
+    if(!el){ clearInterval(orderCountdownTimer); return; } // đã chuyển màn hình khác - tự dừng đếm
+    const remain = deadline - Date.now();
+    el.textContent = remain > 0
+      ? `⏰ Còn ${formatCountdownRemain(remain)} để thanh toán trước khi đơn tự huỷ`
+      : '⏰ Đã quá hạn — đơn sẽ sớm được tự động huỷ';
+  }
+  tick();
+  orderCountdownTimer = setInterval(tick, 1000);
+}
+
+// ============================================================
+// MỚI: nhắc nổi "đơn chưa thanh toán" - vì nhiều khách chưa quen tự vào mục
+// Tra cứu đơn hàng để xem lại mã QR, nút này tự hiện lại (giống nút nổi Danh mục)
+// nếu khách còn đơn chưa thanh toán, bấm vào mở thẳng đúng đơn kèm QR + đếm ngược
+// ============================================================
+function savePendingOrderReminder(order){
+  if(!order || order.paid) return;
+  localStorage.setItem('giftlab_pending_order', JSON.stringify({ id: order.id, phone: order.phone }));
+}
+function clearPendingOrderReminder(){
+  localStorage.removeItem('giftlab_pending_order');
+  pendingOrderReminder = null;
+  renderPendingOrderReminderBtn();
+}
+function renderPendingOrderReminderBtn(){
+  const btn = document.getElementById('unpaidReminderBtn');
+  if(!btn) return;
+  if(pendingOrderReminder){
+    btn.style.display = 'flex';
+    btn.textContent = `💳 Đơn #${pendingOrderReminder.id} chưa thanh toán`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+function openPendingOrderReminder(){
+  if(!pendingOrderReminder) return;
+  lookupPhone = pendingOrderReminder.phone;
+  lookupOrderResult = pendingOrderReminder;
+  drawerView = 'lookup-result';
+  openDrawer();
+}
+// MỚI: kiểm tra lại tình trạng đơn đã lưu mỗi khi tải trang - nếu đã thanh toán/bị huỷ/quá
+// hạn thì tự xoá nhắc nhở đi, không hiện nút nổi nữa
+async function checkPendingOrderReminder(){
+  const raw = localStorage.getItem('giftlab_pending_order');
+  if(!raw) return;
+  let saved;
+  try{ saved = JSON.parse(raw); } catch(e){ localStorage.removeItem('giftlab_pending_order'); return; }
+  try{
+    const res = await fetch('/api/orders/lookup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: saved.id, phone: saved.phone })
+    });
+    if(!res.ok){ clearPendingOrderReminder(); return; }
+    const data = await res.json();
+    if(data.paid || data.status === 'huy'){ clearPendingOrderReminder(); return; }
+    pendingOrderReminder = data;
+    renderPendingOrderReminderBtn();
+  } catch(e){
+    // Mất mạng lúc tải trang - bỏ qua, không xoá nhắc nhở, thử lại ở lần tải trang sau
+  }
+}
+
 function renderDrawer(){
   if (drawerView === 'variant') { renderVariantPicker(); return; }
   if (drawerView === 'lookup') { renderLookupForm(); return; }
@@ -1447,8 +1541,9 @@ function renderDrawer(){
       <div class="qr-box">
         <img src="${lastOrder.qrUrl}" alt="Mã QR chuyển khoản" class="qr-img">
         <p class="qr-note">Quét mã để chuyển khoản đúng số tiền ${fmt(lastOrder.dueAmount != null ? lastOrder.dueAmount : (lastOrder.grandTotal || lastOrder.total))}${lastOrder.codShipping ? ' (chưa gồm phí ship — phần này sẽ thu khi giao hàng)' : ''}.</p>
+        ${orderAutomationEnabled ? `<p class="countdown-text" id="orderCountdownSuccess"></p>` : ''}
       </div>
-      <div class="checkout-notice">⏰ Đơn sẽ tự động huỷ nếu chưa thanh toán trong vòng <b>1 giờ</b> kể từ lúc đặt, mong quý khách thông cảm cho sự bất tiện này. Chúc quý khách lướt ngắm vui, hốt được nhiều deal hời!!</div>
+      ${orderAutomationEnabled ? `<div class="checkout-notice">⏰ Đơn sẽ tự động huỷ nếu chưa thanh toán trong vòng <b>1 giờ</b> kể từ lúc đặt, mong quý khách thông cảm cho sự bất tiện này. Chúc quý khách lướt ngắm vui, hốt được nhiều deal hời!!</div>` : ''}
     ` : '';
     list.innerHTML = `
       <div class="success-box">
@@ -1460,6 +1555,7 @@ function renderDrawer(){
       ${shippingSummary}
       ${qrBlock}
     `;
+    if(orderAutomationEnabled && lastOrder && lastOrder.qrUrl){ startOrderCountdown(lastOrder.createdAt, 'orderCountdownSuccess'); }
     return;
   }
 
@@ -1516,7 +1612,7 @@ function renderDrawer(){
       <div class="foot-row" id="cf-addons-row" style="display:${selectedAddOnIds.size > 0 ? 'flex' : 'none'};"><span>Dịch vụ kèm thêm</span><b id="cf-addons-fee">Đang tính...</b></div>
       <div class="foot-row"><span>Tổng giá trị đơn</span><b id="cf-grand-total">${fmt(total)}</b></div>
       <div class="foot-row" style="font-weight:700;"><span>${wantCodShipping ? 'Cần chuyển khoản (chưa gồm ship)' : 'Cần chuyển khoản'}</span><b id="cf-due-amount">${fmt(total)}</b></div>
-      <div class="checkout-notice">⏰ Đơn sẽ tự động huỷ nếu chưa thanh toán trong vòng <b>1 giờ</b> kể từ lúc đặt.</div>
+      ${orderAutomationEnabled ? `<div class="checkout-notice">⏰ Đơn sẽ tự động huỷ nếu chưa thanh toán trong vòng <b>1 giờ</b> kể từ lúc đặt.</div>` : ''}
       <button class="checkout-btn" id="submitOrderBtn" onclick="submitOrder()">Gửi đơn hàng</button>
     `;
     const previewItems = checkoutEntries.map(e => ({ id: e.p.id, variantIndex: e.variantIndex, qty: e.qty }));
@@ -1758,6 +1854,7 @@ async function submitOrder(){
       return;
     }
     lastOrder = await res.json();
+    savePendingOrderReminder(lastOrder); // MỚI: lưu lại để nút nhắc nổi hiện ra nếu khách rời trang mà chưa thanh toán
     // MỚI: chỉ xoá khỏi giỏ đúng những sản phẩm vừa đặt - sản phẩm chưa tick chọn vẫn
     // giữ nguyên trong giỏ để khách đặt tiếp ở lần sau
     checkoutEntries.forEach(e => {
@@ -1825,6 +1922,7 @@ function closeDrawer(){
 
 loadProducts().then(() => {
   updateCartUI();
+  checkPendingOrderReminder(); // MỚI: kiểm tra có đơn chưa thanh toán để hiện nút nhắc nổi
   // MỚI: nếu khách vào thẳng link /product/<id>, tự mở đúng trang chi tiết đó
   const match = window.location.pathname.match(/^\/product\/(.+)$/);
   if (match) {
