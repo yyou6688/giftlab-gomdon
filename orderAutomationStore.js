@@ -41,6 +41,25 @@ async function getSheetsClient() {
   return sheetsClient;
 }
 
+// MỚI: tự tạo tab "OrderAutomation" trong Sheet nếu chưa có - tránh phải nhờ
+// người dùng tự vào Google Sheet tạo tab tay (lỗi "Unable to parse range" xảy ra
+// khi đọc/ghi vào 1 tab chưa tồn tại). Chỉ kiểm tra 1 lần rồi nhớ lại kết quả,
+// không phải gọi API kiểm tra mỗi lần đọc/ghi.
+let sheetEnsured = false;
+async function ensureSheetExists() {
+  if (sheetEnsured) return;
+  const sheets = await getSheetsClient();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID, fields: 'sheets.properties.title' });
+  const titles = (meta.data.sheets || []).map(s => s.properties.title);
+  if (!titles.includes('OrderAutomation')) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: 'OrderAutomation' } } }] }
+    });
+  }
+  sheetEnsured = true;
+}
+
 const SHEET_RANGE = 'OrderAutomation!A:B';
 const HEADER_ROW = ['Key', 'ValueJSON'];
 
@@ -59,6 +78,7 @@ function fileSaveSettings(settings) {
 
 // ---------- Backend: Google Sheets ----------
 async function sheetGetSettings() {
+  await ensureSheetExists();
   const sheets = await getSheetsClient();
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_RANGE });
   const rows = res.data.values || [];
@@ -72,6 +92,7 @@ async function sheetGetSettings() {
   }
 }
 async function sheetSaveSettings(settings) {
+  await ensureSheetExists();
   const sheets = await getSheetsClient();
   const values = [HEADER_ROW, ['settings', JSON.stringify(settings)]];
   await sheets.spreadsheets.values.clear({ spreadsheetId: SHEET_ID, range: SHEET_RANGE });
