@@ -462,8 +462,10 @@ async function deleteOrder(id){
   else { alert('Không xoá được đơn hàng.'); }
 }
 
-// MỚI: đọc file Excel gắn mã vận đơn hàng loạt (2 cột: Mã đơn hàng, Mã vận đơn)
-// rồi tự cập nhật trackingCode + chuyển trạng thái sang "Đang giao" cho các đơn đó
+// MỚI: đọc file Excel gắn mã vận đơn hàng loạt. Ưu tiên khớp theo "Mã đơn hàng"
+// nếu file có cột này; nếu không (như file xuất "Tracking No." từ SPX thường để
+// trống Customer Reference No.), tự chuyển sang khớp theo Số điện thoại người
+// nhận - chỉ áp dụng cho đơn CHƯA có mã vận đơn để tránh gán nhầm.
 async function handleTrackingExcelUpload(input){
   const file = input.files[0];
   if(!file) return;
@@ -477,13 +479,17 @@ async function handleTrackingExcelUpload(input){
 
       // Chấp nhận vài kiểu tên cột khác nhau cho dễ dùng
       const updates = rows.map(r => {
-        const orderId = r['Mã đơn hàng'] ?? r['ID'] ?? r['id'] ?? r['Mã đơn'];
-        const trackingCode = r['Mã vận đơn'] ?? r['TrackingCode'] ?? r['Tracking'] ?? r['Mã vận đơn SPX'];
-        return { id: orderId, trackingCode: trackingCode ? String(trackingCode).trim() : '', status: 'dang_giao' };
-      }).filter(u => u.id !== undefined && u.id !== '' && u.trackingCode);
+        const orderId = r['Mã đơn hàng'] ?? r['ID'] ?? r['id'] ?? r['Mã đơn'] ?? r['Customer Reference No.'];
+        const phone = r['Số điện thoại'] ?? r['Số điện thoại người nhận'] ?? r['SĐT'] ?? r['Phone'] ?? r['Receiver Phone Number']; // MỚI
+        const trackingCode = r['Mã vận đơn'] ?? r['TrackingCode'] ?? r['Tracking'] ?? r['Mã vận đơn SPX'] ?? r['Tracking No.']; // MỚI: thêm tên cột của file SPX
+        const u = { trackingCode: trackingCode ? String(trackingCode).trim() : '', status: 'dang_giao' };
+        if (orderId !== undefined && orderId !== '') u.id = orderId;
+        else if (phone !== undefined && phone !== '') u.phone = String(phone).trim(); // MỚI: fallback đối chiếu theo SĐT
+        return u;
+      }).filter(u => (u.id !== undefined || u.phone !== undefined) && u.trackingCode);
 
       if(updates.length === 0){
-        alert('Không đọc được dữ liệu — file cần có cột "Mã đơn hàng" và "Mã vận đơn".');
+        alert('Không đọc được dữ liệu — file cần có cột "Mã vận đơn" (hoặc "Tracking No.") và 1 trong 2 cột "Mã đơn hàng" hoặc "Số điện thoại người nhận".');
         input.value = '';
         return;
       }
@@ -494,7 +500,11 @@ async function handleTrackingExcelUpload(input){
       });
       const result = await res.json();
       if(res.ok){
-        alert(`Đã cập nhật ${result.success.length} đơn.${result.notFound.length ? ` Không tìm thấy ${result.notFound.length} mã đơn: ${result.notFound.join(', ')}` : ''}`);
+        // MỚI: báo thêm các SĐT bị trùng giữa nhiều đơn chưa giao (cần gắn tay)
+        let msg = `Đã cập nhật ${result.success.length} đơn.`;
+        if (result.notFound.length) msg += ` Không tìm thấy ${result.notFound.length}: ${result.notFound.join(', ')}`;
+        if (result.ambiguous && result.ambiguous.length) msg += ` Trùng SĐT với nhiều đơn chưa giao (cần gắn tay) ${result.ambiguous.length}: ${result.ambiguous.join(', ')}`;
+        alert(msg);
         await tryLoadOrders();
       } else {
         alert(result.error || 'Cập nhật hàng loạt thất bại.');
