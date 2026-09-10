@@ -543,6 +543,17 @@ footer p{ font-size:13px; color:var(--ink-soft); margin-top:6px; }
 .order-meta{ font-size:13px; color:var(--ink-soft); margin-bottom:8px; }
 .order-items{ font-size:13px; margin-bottom:10px; }
 .order-items div{ display:flex; justify-content:space-between; padding:2px 0; }
+.order-item-row{ align-items:center; gap:8px; }
+.order-item-row span:last-child{ white-space:nowrap; flex:0 0 auto; }
+/* MỚI: ảnh SKU sản phẩm khách đã đặt, hiện trong tab Đơn hàng ở trang quản trị */
+.order-item-thumb{
+  width:32px; height:32px; border-radius:6px; object-fit:cover; flex:0 0 auto;
+  border:1px solid var(--line); background:#fff; cursor:zoom-in;
+}
+.order-item-thumb-empty{
+  display:flex; align-items:center; justify-content:center; font-size:14px;
+  cursor:default; background: linear-gradient(135deg, #EDE8FA, #F6E8F7);
+}
 .status-select{ padding:6px 10px; border-radius:8px; border:1px solid var(--line); font-size:13px; }
 /* MỚI: nút xoá đơn hàng (dùng chung style .danger, không phụ thuộc .product-row) */
 button.danger{
