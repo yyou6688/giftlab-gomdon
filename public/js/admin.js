@@ -116,6 +116,18 @@ function escapeHtml(str){
 
 function fmt(n){ return n.toLocaleString('vi-VN') + 'đ'; }
 
+// MỚI: lấy ảnh SKU của 1 dòng sản phẩm trong đơn hàng, để hiển thị trong tab Đơn hàng.
+// Đơn hàng đặt mới sẽ có sẵn it.image (lưu tại thời điểm đặt). Với đơn cũ đặt trước khi
+// có tính năng này (chưa lưu it.image), dò lại theo sản phẩm/SKU hiện tại trong danh
+// sách `products` đã tải - nếu sản phẩm/SKU đã bị xoá thì sẽ không có ảnh để hiện.
+function getOrderItemImage(it){
+  if (it.image) return it.image;
+  const p = products.find(x => x.id === it.id);
+  if (!p) return '';
+  const variant = (p.variants && p.variants[it.variantIndex]) || null;
+  return (variant && variant.image) || p.image || '';
+}
+
 // ---------- Đăng nhập ----------
 async function login(){
   const key = document.getElementById('adminKeyInput').value.trim();
@@ -294,7 +306,19 @@ function renderOrders(){
       </div>
       ${expandedAddressEditId===o.id ? renderAddressEditForm(o) : ''}
       <div class="order-items">
-        ${o.items.map(it => `<div><span>${escapeHtml(it.name)}${it.variantName ? ' — ' + escapeHtml(it.variantName) : ''} × ${it.qty}</span><span>${fmt(it.price*it.qty)}</span></div>`).join('')}
+        ${o.items.map(it => {
+          const img = getOrderItemImage(it);
+          const thumb = img
+            ? `<a href="${img}" target="_blank" rel="noopener"><img src="${img}" alt="" class="order-item-thumb"></a>`
+            : `<div class="order-item-thumb order-item-thumb-empty">🎁</div>`;
+          return `<div class="order-item-row">
+            <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+              ${thumb}
+              <span>${escapeHtml(it.name)}${it.variantName ? ' — ' + escapeHtml(it.variantName) : ''} × ${it.qty}</span>
+            </div>
+            <span>${fmt(it.price*it.qty)}</span>
+          </div>`;
+        }).join('')}
       </div>
       <div class="order-meta" style="margin-top:4px;">
         Phí ship: ${fmt(o.shippingFee || 0)}${o.freeshipApplied ? ` · <span style="color:var(--sage-deep); font-weight:600;">Freeship (${escapeHtml(o.freeshipApplied)})</span>` : ''}${o.giftWrap ? ` · <span style="color:#B23A3A; font-weight:600;">🎁 Gói quà (${o.giftWrapFee > 0 ? fmt(o.giftWrapFee) : 'miễn phí'})</span>` : ''}${(o.addOns && o.addOns.length) ? ` · <span style="color:var(--sage-deep); font-weight:600;">🧩 ${o.addOns.map(a => escapeHtml(a.label)).join(', ')} (${fmt(o.addOnsFee || 0)})</span>` : ''}
