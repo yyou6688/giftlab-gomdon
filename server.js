@@ -18,6 +18,7 @@ const policiesStore = require('./policiesStore'); // MỚI: các trang chính s�
 const categoriesStore = require('./categoriesStore'); // MỚI: danh mục giờ lưu Google Sheets, không mất khi deploy lại
 const promotionsStore = require('./promotionsStore'); // MỚI: chương trình khuyến mãi lưu Google Sheets, không mất khi deploy lại
 const flashSalesStore = require('./flashSalesStore'); // MỚI: chương trình Flash Sale, lưu riêng (Google Sheets tab "FlashSales")
+const orderAutomationStore = require('./orderAutomationStore'); // MỚI: bật/tắt tự động huỷ đơn chưa thanh toán
 const promoUtils = require('./promoUtils'); // MỚI: logic tính giá/giới hạn khuyến mãi + flash sale dùng chung (2 loại cùng cấu trúc)
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
@@ -803,6 +804,31 @@ app.post('/api/admin/promotions', requireAdmin, async (req, res) => {
 // để phía trang chủ tự quyết định hiển thị giá nào (giá gốc nếu chưa tới giờ, giá sale
 // nếu đã bắt đầu) - còn giá THỰC SỰ TÍNH TIỀN vẫn luôn do server tính lại lúc đặt hàng
 // (xem buildOrderPricing), không phụ thuộc vào giá trình duyệt gửi lên.
+// MỚI: cho trang khách biết tính năng "tự động huỷ đơn chưa thanh toán" đang bật hay
+// tắt - để ẩn/hiện đúng các dòng nhắc nhở + đếm ngược cho khớp thực tế (public, không
+// cần đăng nhập admin, vì trang khách nào cũng cần đọc được)
+app.get('/api/order-automation', async (req, res) => {
+  try {
+    const settings = await orderAutomationStore.getSettings();
+    res.json(settings);
+  } catch (err) {
+    console.error('Lỗi đọc cấu hình tự động hoá đơn hàng:', err.message);
+    res.json({ autoCancelUnpaidEnabled: true }); // lỗi thì mặc định coi như đang bật, an toàn hơn
+  }
+});
+// MỚI: admin bật/tắt tính năng này ở tab Đơn hàng
+app.patch('/api/order-automation', requireAdmin, async (req, res) => {
+  try {
+    const current = await orderAutomationStore.getSettings();
+    const next = { ...current, ...req.body };
+    await orderAutomationStore.saveSettings(next);
+    res.json(next);
+  } catch (err) {
+    console.error('Lỗi lưu cấu hình tự động hoá đơn hàng:', err.message);
+    res.status(500).json({ error: 'Không lưu được cấu hình' });
+  }
+});
+
 app.get('/api/flash-sales', async (req, res) => {
   try {
     const [flashSales, products] = await Promise.all([
@@ -1683,6 +1709,8 @@ setInterval(autoCompleteDeliveredOrders, 60 * 60 * 1000);
 const UNPAID_AUTO_CANCEL_MS = 60 * 60 * 1000; // 1 tiếng
 async function autoCancelUnpaidOrders() {
   try {
+    const settings = await orderAutomationStore.getSettings(); // MỚI: admin có thể tạm tắt tính năng này
+    if (!settings.autoCancelUnpaidEnabled) return;
     const orders = await ordersStore.listOrders();
     const now = Date.now();
     const dueOrders = orders.filter(o =>
