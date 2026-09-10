@@ -1456,6 +1456,13 @@ app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
     if (province !== undefined) patch.province = province;   // MỚI
     if (ward !== undefined) patch.ward = ward;                 // MỚI
     if (addressDetail !== undefined) patch.addressDetail = addressDetail; // MỚI
+    // MỚI: tích "Đã nhận tiền" cho đơn còn đang ở trạng thái "Mới" thì tự chuyển
+    // sang "Chờ giao hàng" luôn, đỡ phải đổi trạng thái thủ công thêm 1 bước.
+    // Không tự chuyển nếu admin đang tự chọn trạng thái khác trong cùng lúc, và
+    // không lùi trạng thái nếu đơn đã ở bước xa hơn (đang giao/đã giao/hoàn thành/huỷ).
+    if (paid === true && status === undefined && current.status === 'moi') {
+      patch.status = 'cho_giao';
+    }
     // MỚI: nếu đổi bất kỳ phần nào của địa chỉ, ghép lại chuỗi địa chỉ gộp hiển thị gọn
     if (wantsAddressChange) {
       const p = province !== undefined ? province : current.province;
@@ -1555,20 +1562,47 @@ app.post('/api/orders/update-address', async (req, res) => {
   }
 });
 
-// MỚI: cập nhật hàng loạt nhiều đơn cùng lúc - dùng khi tải file Excel gắn mã vận đơn
-// Body: { updates: [{ id, trackingCode, status }, ...] }
+// MỚI: chuẩn hoá số điện thoại để so khớp (bỏ khoảng trắng/dấu, lấy 9 số cuối
+// để không phân biệt các kiểu ghi khác nhau: 0901234567 / +84901234567 / 84901234567)
+function normalizePhone(p){
+  const digits = String(p || '').replace(/\D/g, '');
+  return digits.slice(-9);
+}
+
+// MỚI: cập nhật hàng loạt nhiều đơn cùng lúc - dùng khi tải file Excel gắn mã vận đơn.
+// Body: { updates: [{ id?, phone?, trackingCode, status }, ...] } - mỗi dòng cần có
+// id HOẶC phone; nếu chỉ có phone thì tự dò trong các đơn CHƯA có mã vận đơn.
 app.patch('/api/orders/bulk', requireAdmin, async (req, res) => {
   const { updates } = req.body;
   if (!Array.isArray(updates) || updates.length === 0) {
     return res.status(400).json({ error: 'Không có đơn nào để cập nhật' });
   }
-  const results = { success: [], notFound: [] };
+  const results = { success: [], notFound: [], ambiguous: [] }; // MỚI: ambiguous = nhiều đơn cùng SĐT chưa giao, không tự gán được
+  const allOrders = await ordersStore.listOrders(); // MỚI: dùng để dò đơn theo số điện thoại khi file không có Mã đơn hàng
   for (const u of updates) {
-    const id = Number(u.id);
+    let id = (u.id !== undefined && u.id !== '') ? Number(u.id) : undefined;
+    const label = u.id ?? u.phone ?? '?';
     const patch = {};
     if (u.trackingCode !== undefined) patch.trackingCode = u.trackingCode;
     if (u.status !== undefined) patch.status = u.status;
     try {
+      // MỚI: không có Mã đơn hàng -> dò theo Số điện thoại người nhận, chỉ khớp
+      // với đơn CHƯA có mã vận đơn (đơn đã có mã rồi thì bỏ qua, tránh gán nhầm đơn cũ)
+      if (id === undefined && u.phone) {
+        const target = normalizePhone(u.phone);
+        const matches = target ? allOrders.filter(o => !o.trackingCode && normalizePhone(o.phone) === target) : [];
+        if (matches.length === 1) {
+          id = matches[0].id;
+        } else if (matches.length === 0) {
+          results.notFound.push(label);
+          continue;
+        } else {
+          results.ambiguous.push(label); // nhiều đơn chưa giao cùng SĐT này - cần vào sửa tay
+          continue;
+        }
+      }
+      if (id === undefined || Number.isNaN(id)) { results.notFound.push(label); continue; }
+
       const before = await ordersStore.getOrderById(id); // MỚI: để biết trước đó có mã vận đơn chưa
       const updated = await ordersStore.updateOrder(id, patch);
       if (updated) {
@@ -1578,11 +1612,11 @@ app.patch('/api/orders/bulk', requireAdmin, async (req, res) => {
           sendTrackingEmailToCustomer(updated).catch(() => {});
         }
       } else {
-        results.notFound.push(id);
+        results.notFound.push(label);
       }
     } catch (err) {
-      console.error(`Lỗi cập nhật đơn #${id}:`, err.message);
-      results.notFound.push(id);
+      console.error(`Lỗi cập nhật đơn #${label}:`, err.message);
+      results.notFound.push(label);
     }
   }
   res.json(results);
