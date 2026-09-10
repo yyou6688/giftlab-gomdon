@@ -466,6 +466,39 @@ async function deleteOrder(id){
 // nếu file có cột này; nếu không (như file xuất "Tracking No." từ SPX thường để
 // trống Customer Reference No.), tự chuyển sang khớp theo Số điện thoại người
 // nhận - chỉ áp dụng cho đơn CHƯA có mã vận đơn để tránh gán nhầm.
+const TRACKING_HEADER_ALIASES = ['mã vận đơn', 'trackingcode', 'tracking', 'mã vận đơn spx', 'tracking no'];
+const ORDER_ID_HEADER_ALIASES = ['mã đơn hàng', 'id', 'mã đơn', 'customer reference no'];
+const PHONE_HEADER_ALIASES = ['số điện thoại', 'số điện thoại người nhận', 'sđt', 'phone', 'receiver phone number'];
+function normalizeHeaderCell(v){
+  return String(v ?? '').trim().toLowerCase().replace(/\.+$/, ''); // bỏ dấu chấm cuối (VD: "Tracking No.")
+}
+// MỚI: một số file xuất từ SPX có 1-2 dòng thông tin/tiêu đề song ngữ phía TRÊN
+// dòng tiêu đề thật (VD: "Report Download Time...", rồi mới tới "Tracking No.",
+// có khi còn thêm 1 dòng dịch tiếng Việt ngay dưới nữa) khiến dòng 1 không phải
+// tiêu đề thật. Hàm này tự dò đúng dòng tiêu đề (và bỏ qua dòng dịch trùng lặp
+// nếu có) thay vì luôn giả định dòng đầu tiên là tiêu đề.
+function findTrackingSheetLayout(matrix){
+  for (let i = 0; i < Math.min(matrix.length, 15); i++){
+    const cells = (matrix[i] || []).map(normalizeHeaderCell);
+    const trackingCol = cells.findIndex(c => TRACKING_HEADER_ALIASES.includes(c));
+    if (trackingCol === -1) continue;
+    const idCol = cells.findIndex(c => ORDER_ID_HEADER_ALIASES.includes(c));
+    const phoneCol = cells.findIndex(c => PHONE_HEADER_ALIASES.includes(c));
+    if (idCol === -1 && phoneCol === -1) continue; // chỉ có cột mã vận đơn thì chưa chắc là dòng tiêu đề
+    let dataStart = i + 1;
+    // Bỏ qua thêm các dòng "tiêu đề" liên tiếp phía dưới (VD: dòng dịch tiếng Việt)
+    while (dataStart < matrix.length){
+      const nextCells = (matrix[dataStart] || []).map(normalizeHeaderCell);
+      const looksLikeHeader = TRACKING_HEADER_ALIASES.includes(nextCells[trackingCol])
+        || (idCol !== -1 && ORDER_ID_HEADER_ALIASES.includes(nextCells[idCol]))
+        || (phoneCol !== -1 && PHONE_HEADER_ALIASES.includes(nextCells[phoneCol]));
+      if (!looksLikeHeader) break;
+      dataStart++;
+    }
+    return { trackingCol, idCol, phoneCol, dataStart };
+  }
+  return null;
+}
 async function handleTrackingExcelUpload(input){
   const file = input.files[0];
   if(!file) return;
@@ -475,16 +508,16 @@ async function handleTrackingExcelUpload(input){
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }); // MỚI: đọc dạng mảng thô để tự dò dòng tiêu đề
+      const layout = findTrackingSheetLayout(matrix);
 
-      // Chấp nhận vài kiểu tên cột khác nhau cho dễ dùng
-      const updates = rows.map(r => {
-        const orderId = r['Mã đơn hàng'] ?? r['ID'] ?? r['id'] ?? r['Mã đơn'] ?? r['Customer Reference No.'];
-        const phone = r['Số điện thoại'] ?? r['Số điện thoại người nhận'] ?? r['SĐT'] ?? r['Phone'] ?? r['Receiver Phone Number']; // MỚI
-        const trackingCode = r['Mã vận đơn'] ?? r['TrackingCode'] ?? r['Tracking'] ?? r['Mã vận đơn SPX'] ?? r['Tracking No.']; // MỚI: thêm tên cột của file SPX
+      const updates = !layout ? [] : matrix.slice(layout.dataStart).map(row => {
+        const trackingCode = row[layout.trackingCol];
+        const orderId = layout.idCol !== -1 ? row[layout.idCol] : undefined;
+        const phone = layout.phoneCol !== -1 ? row[layout.phoneCol] : undefined;
         const u = { trackingCode: trackingCode ? String(trackingCode).trim() : '', status: 'dang_giao' };
         if (orderId !== undefined && orderId !== '') u.id = orderId;
-        else if (phone !== undefined && phone !== '') u.phone = String(phone).trim(); // MỚI: fallback đối chiếu theo SĐT
+        else if (phone !== undefined && phone !== '') u.phone = String(phone).trim();
         return u;
       }).filter(u => (u.id !== undefined || u.phone !== undefined) && u.trackingCode);
 
