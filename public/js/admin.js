@@ -513,8 +513,11 @@ async function handleTrackingExcelUpload(input){
 
       const updates = !layout ? [] : matrix.slice(layout.dataStart).map(row => {
         const trackingCode = row[layout.trackingCol];
-        const orderId = layout.idCol !== -1 ? row[layout.idCol] : undefined;
+        const rawOrderId = layout.idCol !== -1 ? row[layout.idCol] : undefined;
         const phone = layout.phoneCol !== -1 ? row[layout.phoneCol] : undefined;
+        // MỚI: file SPX hay điền "-" khi cột không có dữ liệu (VD: chưa có Mã đơn hàng)
+        // thay vì để trống hẳn - coi "-" như không có giá trị, không phải 1 mã đơn thật
+        const orderId = (rawOrderId !== undefined && String(rawOrderId).trim() !== '-') ? rawOrderId : '';
         const u = { trackingCode: trackingCode ? String(trackingCode).trim() : '', status: 'dang_giao' };
         if (orderId !== undefined && orderId !== '') u.id = orderId;
         else if (phone !== undefined && phone !== '') u.phone = String(phone).trim();
