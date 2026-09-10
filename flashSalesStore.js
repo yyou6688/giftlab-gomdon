@@ -101,11 +101,24 @@ async function sheetSaveFlashSales(flashSales) {
 }
 
 // ---------- API dùng chung ----------
+// MỚI: cache tạm 15 giây trong bộ nhớ - lý do giống hệt promotionsStore.js (trang chủ
+// tự gọi lại API Flash Sale mỗi 20 giây, gọi thẳng Sheets mỗi lần dễ vượt quota Google)
+let flashSalesCache = null;
+let flashSalesCacheAt = 0;
+const FLASH_SALES_CACHE_TTL_MS = 15000;
 async function listFlashSales() {
-  return useSheets ? sheetListFlashSales() : fileListFlashSales();
+  if (!useSheets) return fileListFlashSales();
+  const now = Date.now();
+  if (flashSalesCache && (now - flashSalesCacheAt) < FLASH_SALES_CACHE_TTL_MS) return flashSalesCache;
+  const data = await sheetListFlashSales();
+  flashSalesCache = data;
+  flashSalesCacheAt = now;
+  return data;
 }
 async function saveFlashSales(flashSales) {
-  return useSheets ? sheetSaveFlashSales(flashSales) : fileSaveFlashSales(flashSales);
+  const result = await (useSheets ? sheetSaveFlashSales(flashSales) : fileSaveFlashSales(flashSales));
+  flashSalesCache = null; // MỚI: vừa lưu xong - xoá cache để lần đọc kế tiếp lấy đúng dữ liệu mới ngay
+  return result;
 }
 
 module.exports = { listFlashSales, saveFlashSales, useSheets };
