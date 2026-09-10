@@ -227,7 +227,11 @@ function renderOrders(){
   // MỚI: lọc theo SĐT (chứa chuỗi nhập), theo trạng thái và theo nguồn tạo đơn
   const filtered = orders.filter(o => {
     const matchPhone = !orderPhoneFilter.trim() || String(o.phone).includes(orderPhoneFilter.trim());
-    const matchStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
+    // MỚI: "cho_thanh_toan" không phải trạng thái đơn thật - lọc theo CHƯA thanh toán
+    // (bất kể đang ở bước giao hàng nào), dùng thay cho lọc theo "Mới" (ít tác dụng vì
+    // đơn "Mới" mà đã thanh toán thì tự chuyển "Chờ giao hàng" ngay, không đọng lại)
+    const matchStatus = orderStatusFilter === 'all'
+      || (orderStatusFilter === 'cho_thanh_toan' ? !o.paid : o.status === orderStatusFilter);
     const matchSource = orderSourceFilter === 'all' || (o.source || 'website') === orderSourceFilter;
     return matchPhone && matchStatus && matchSource;
   });
@@ -245,7 +249,8 @@ function renderOrders(){
       <div class="form-field">
         <select style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);" onchange="orderStatusFilter=this.value; renderOrders();">
           <option value="all" ${orderStatusFilter==='all'?'selected':''}>Tất cả trạng thái</option>
-          ${Object.entries(STATUS_LABEL).map(([k,v]) => `<option value="${k}" ${orderStatusFilter===k?'selected':''}>${v}</option>`).join('')}
+          <option value="cho_thanh_toan" ${orderStatusFilter==='cho_thanh_toan'?'selected':''}>Chờ thanh toán</option>
+          ${Object.entries(STATUS_LABEL).filter(([k]) => k !== 'moi').map(([k,v]) => `<option value="${k}" ${orderStatusFilter===k?'selected':''}>${v}</option>`).join('')}
         </select>
       </div>
       <div class="form-field">
@@ -388,7 +393,7 @@ async function saveAddressEdit(id){
     return;
   }
   const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ province, ward, addressDetail }) });
-  if(res.ok){ expandedAddressEditId = null; await tryLoadOrders(); }
+  if(res.ok){ expandedAddressEditId = null; showAdminToast('✅ Đã lưu địa chỉ'); await tryLoadOrders(); }
   else { const data = await res.json().catch(() => ({})); msgEl.textContent = data.error || 'Không lưu được, thử lại.'; }
 }
 
@@ -396,7 +401,7 @@ async function saveAddressEdit(id){
 async function cancelOrder(id){
   if(!confirm(`Huỷ đơn hàng #${id}? Không thể hoàn tác.`)) return;
   const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'huy' }) });
-  if(res.ok){ await tryLoadOrders(); }
+  if(res.ok){ showAdminToast('✅ Đã huỷ đơn hàng'); await tryLoadOrders(); }
   else { const data = await res.json().catch(() => ({})); alert(data.error || 'Không huỷ được đơn hàng.'); }
 }
 
@@ -409,7 +414,8 @@ function toggleSelectOrder(id, checked){
 function toggleSelectAllOrders(checked){
   const filtered = orders.filter(o => {
     const matchPhone = !orderPhoneFilter.trim() || String(o.phone).includes(orderPhoneFilter.trim());
-    const matchStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
+    const matchStatus = orderStatusFilter === 'all'
+      || (orderStatusFilter === 'cho_thanh_toan' ? !o.paid : o.status === orderStatusFilter);
     return matchPhone && matchStatus;
   });
   if(checked){ filtered.forEach(o => selectedOrderIds.add(o.id)); }
@@ -433,6 +439,8 @@ async function bulkCancelOrders(){
   await tryLoadOrders();
   if(failed.length){
     alert(`Không huỷ được ${failed.length} đơn (có thể đã có mã vận đơn): #${failed.join(', #')}`);
+  } else {
+    showAdminToast(`✅ Đã huỷ ${ids.length} đơn`);
   }
 }
 
@@ -450,6 +458,8 @@ async function bulkDeleteOrders(){
   await tryLoadOrders();
   if(failed.length){
     alert(`Không xoá được ${failed.length} đơn: #${failed.join(', #')}`);
+  } else {
+    showAdminToast(`✅ Đã xoá ${ids.length} đơn`);
   }
 }
 
@@ -458,7 +468,7 @@ async function bulkDeleteOrders(){
 async function deleteOrder(id){
   if(!confirm(`Xoá hẳn đơn hàng #${id}? Không thể hoàn tác.`)) return;
   const res = await apiFetch(`/api/orders/${id}`, { method: 'DELETE' });
-  if(res.ok){ selectedOrderIds.delete(id); await tryLoadOrders(); }
+  if(res.ok){ selectedOrderIds.delete(id); showAdminToast('✅ Đã xoá đơn hàng'); await tryLoadOrders(); }
   else { alert('Không xoá được đơn hàng.'); }
 }
 
@@ -637,7 +647,7 @@ function exportSpxExcel(){
 
 async function updateStatus(id, status){
   const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
-  if(res.ok){ await tryLoadOrders(); } else {
+  if(res.ok){ showAdminToast('✅ Đã cập nhật trạng thái'); await tryLoadOrders(); } else {
     const data = await res.json().catch(() => ({}));
     alert(data.error || 'Không cập nhật được trạng thái.');
     await tryLoadOrders(); // MỚI: tải lại để dropdown trả về đúng trạng thái cũ (tránh hiện sai trên UI)
@@ -645,18 +655,18 @@ async function updateStatus(id, status){
 }
 async function updatePaid(id, paid){
   const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ paid }) });
-  if(res.ok){ await tryLoadOrders(); } else { alert('Không cập nhật được.'); }
+  if(res.ok){ showAdminToast('✅ Đã cập nhật thanh toán'); await tryLoadOrders(); } else { alert('Không cập nhật được.'); }
 }
 // MỚI: đánh dấu đã thu phí ship gộp - server tự đồng bộ cho mọi đơn khác cùng nhóm
 async function updateMergeShippingPaid(id, mergeShippingPaid){
   const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ mergeShippingPaid }) });
-  if(res.ok){ await tryLoadOrders(); } else { alert('Không cập nhật được.'); }
+  if(res.ok){ showAdminToast('✅ Đã cập nhật phí ship gộp'); await tryLoadOrders(); } else { alert('Không cập nhật được.'); }
 }
 async function updateTracking(id){
   const input = document.getElementById(`tracking-${id}`);
   const trackingCode = input.value.trim();
   const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ trackingCode }) });
-  if(res.ok){ await tryLoadOrders(); } else { alert('Không lưu được mã vận đơn.'); }
+  if(res.ok){ showAdminToast('✅ Đã lưu mã vận đơn'); await tryLoadOrders(); } else { alert('Không lưu được mã vận đơn.'); }
 }
 
 // ---------- Sản phẩm ----------
