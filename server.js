@@ -47,12 +47,13 @@ const BANK_ID = process.env.BANK_ID || '';
 const BANK_ACCOUNT = process.env.BANK_ACCOUNT || '';
 const BANK_ACCOUNT_NAME = process.env.BANK_ACCOUNT_NAME || '';
 
-// Tạo link ảnh mã QR chuyển khoản (dịch vụ VietQR, miễn phí, không cần đăng ký)
-function buildQrUrl(amount, note) {
+// Tạo link ảnh mã QR chuyển khoản (dịch vụ VietQR, miễn phí, không cần đăng ký).
+// MỚI: bỏ nội dung chuyển khoản (addInfo) - để trống cho ngân hàng tự sinh nội dung
+// mặc định khi khách quét mã, chỉ cần đúng số tiền là đủ.
+function buildQrUrl(amount) {
   if (!BANK_ID || !BANK_ACCOUNT) return null;
   const params = new URLSearchParams({
     amount: String(amount),
-    addInfo: note,
     accountName: BANK_ACCOUNT_NAME
   });
   return `https://img.vietqr.io/image/${BANK_ID}-${BANK_ACCOUNT}-compact2.png?${params.toString()}`;
@@ -1059,10 +1060,10 @@ app.post('/api/orders', async (req, res) => {
     };
     await ordersStore.appendOrder(newOrder);
     await adjustStock(pricing.orderItems, -1); // MỚI: trừ kho ngay khi đặt đơn, kể cả chưa thanh toán
-    // MỚI: nội dung CK đổi thành mã đơn + số điện thoại (dễ đối chiếu hơn tên khách)
+    // MỚI: nội dung CK để trống, ngân hàng tự sinh khi khách quét - chỉ cần đúng số tiền
     // Số tiền QR: nếu chọn trả ship khi nhận hàng thì KHÔNG gồm phí ship
     const dueAmount = computeDueAmount(newOrder);
-    const qrUrl = buildQrUrl(dueAmount, `DH${newOrder.id} ${phone}`);
+    const qrUrl = buildQrUrl(dueAmount);
 
     // MỚI: báo có đơn mới qua Gmail - không await để không làm chậm phản hồi cho khách
     sendNotifyEmail(
@@ -1215,7 +1216,7 @@ app.post('/api/orders/lookup', async (req, res) => {
     }
     // MỚI: nếu chưa thanh toán, kèm lại mã QR đúng số tiền để khách chuyển khoản
     const qrUrl = !order.paid
-      ? buildQrUrl(computeDueAmount(order), `DH${order.id} ${order.phone}`)
+      ? buildQrUrl(computeDueAmount(order))
       : null;
     res.json({ ...order, qrUrl, dueAmount: computeDueAmount(order) });
   } catch (err) {
@@ -1289,7 +1290,7 @@ app.post('/api/orders/merge-quote', async (req, res) => {
     const shippingResult = await computeMergedShipping(selected);
     const oldShippingFeeSum = selected.reduce((s, o) => s + (o.shippingFee || 0), 0);
     // MỚI: nếu chọn trả ship khi nhận hàng thì không cần QR cho phần ship gộp
-    const qrUrl = codShipping ? null : buildQrUrl(shippingResult.fee, `phi ship gop don ${orderIds.join('')} ${phone}`);
+    const qrUrl = codShipping ? null : buildQrUrl(shippingResult.fee);
 
     res.json({
       orderIds: selected.map(o => o.id),
@@ -1335,7 +1336,7 @@ app.post('/api/orders/merge-confirm', async (req, res) => {
         mergeShippingCod: isCod,
       });
     }
-    const qrUrl = isCod ? null : buildQrUrl(shippingResult.fee, `phi ship gop don ${orderIds.join('')} ${phone}`);
+    const qrUrl = isCod ? null : buildQrUrl(shippingResult.fee);
     res.json({
       groupId,
       orderIds: mergeOrderIds,
@@ -1672,6 +1673,36 @@ async function autoCompleteDeliveredOrders() {
 // Chạy ngay lúc khởi động (phòng khi server vừa "thức dậy" sau thời gian ngủ), rồi lặp lại mỗi giờ
 autoCompleteDeliveredOrders();
 setInterval(autoCompleteDeliveredOrders, 60 * 60 * 1000);
+
+// ============================================================
+// MỚI: tự động huỷ đơn CHƯA thanh toán sau 1 tiếng kể từ lúc đặt, nhả lại tồn kho.
+// Áp dụng cho MỌI đơn đang chờ thanh toán tính TỪ LÚC ĐOẠN CODE NÀY BẮT ĐẦU CHẠY -
+// kể cả đơn đã đặt TRƯỚC ĐÓ mà lúc kiểm tra đã quá 1 tiếng (chạy 1 lần ngay khi
+// khởi động để quét luôn các đơn cũ, không chỉ đơn mới), rồi lặp lại kiểm tra mỗi
+// 5 phút để đơn được huỷ gần đúng thời điểm 1 tiếng, không phải đợi tới cả giờ sau.
+const UNPAID_AUTO_CANCEL_MS = 60 * 60 * 1000; // 1 tiếng
+async function autoCancelUnpaidOrders() {
+  try {
+    const orders = await ordersStore.listOrders();
+    const now = Date.now();
+    const dueOrders = orders.filter(o =>
+      !o.paid &&
+      o.status !== 'huy' &&
+      !o.trackingCode && // phòng hờ - đơn đã có mã vận đơn thì tuyệt đối không tự huỷ
+      o.createdAt &&
+      (now - new Date(o.createdAt).getTime()) >= UNPAID_AUTO_CANCEL_MS
+    );
+    for (const o of dueOrders) {
+      await ordersStore.updateOrder(o.id, { status: 'huy' });
+      await adjustStock(o.items, +1); // nhả lại tồn kho đã trừ lúc đặt đơn
+      console.log(`>>> Tự động huỷ đơn #${o.id} (chưa thanh toán quá 1 tiếng), đã nhả lại tồn kho`);
+    }
+  } catch (err) {
+    console.error('Lỗi khi tự động huỷ đơn chưa thanh toán:', err.message);
+  }
+}
+autoCancelUnpaidOrders();
+setInterval(autoCancelUnpaidOrders, 5 * 60 * 1000);
 
 // ============================================================
 app.listen(PORT, () => {
