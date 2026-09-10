@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Maven+Pro:wght@500;600;700;800&family=Be+Vietnam+Pro:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body>
 
@@ -107,6 +107,12 @@
     🗂️ Danh mục
   </button>
 
+  <!-- MỚI: nút nổi nhắc "đơn chưa thanh toán" - chỉ hiện khi khách còn đơn chưa thanh toán
+       lưu trong máy, bấm vào mở thẳng đúng đơn kèm mã QR -->
+  <button class="unpaid-reminder-btn" id="unpaidReminderBtn" onclick="openPendingOrderReminder()" style="display:none;">
+    💳 Đơn chưa thanh toán
+  </button>
+
   <!-- MỚI: nút liên hệ nổi Facebook + Zalo -->
   <div class="contact-float">
     <a href="https://www.facebook.com/minhlayouu" target="_blank" rel="noopener" class="contact-btn contact-fb" aria-label="Nhắn tin Facebook">
@@ -123,6 +129,6 @@
     <div class="product-detail-panel" id="productDetailPanel"></div>
   </div>
 
-<script src="js/shop.js"></script>
+<script src="js/shop.js?v=4"></script>
 </body>
 </html>
