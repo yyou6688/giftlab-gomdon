@@ -166,7 +166,8 @@ async function buildOrderPricing(items, wantGiftWrap, selectedAddOnIds) {
     orderItems.push({
       id: product.id, name: product.name, category: product.category, variantName: variant.name,
       price: finalPrice, originalPrice: variant.price, qty, weight,
-      variantIndex: vIdx, promoId, promoLimit // MỚI: dùng để kiểm tra giới hạn mua theo SĐT ở bước đặt hàng
+      variantIndex: vIdx, promoId, promoLimit, // MỚI: dùng để kiểm tra giới hạn mua theo SĐT ở bước đặt hàng
+      image: variant.image || product.image || '' // MỚI: lưu lại ảnh SKU (hoặc ảnh sản phẩm) tại thời điểm đặt để trang quản trị hiển thị đúng ảnh khách đã đặt, kể cả khi ảnh SKU sau này bị đổi/xoá
     });
   }
   const shippingConfig = await loadShippingConfig(); // MỚI: đọc 1 lần, dùng chung cho ship + gói quà + add-ons
