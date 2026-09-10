@@ -1210,7 +1210,7 @@ function renderLookupMergeResult(){
           ? `<p class="qr-note">Không cần chuyển khoản — SPX sẽ thu ${fmt(r.mergeShippingFee)} khi giao hàng.</p>`
           : (r.qrUrl ? `
             <img src="${r.qrUrl}" alt="Mã QR chuyển khoản" class="qr-img">
-            <p class="qr-note">Quét mã để chuyển khoản đúng số tiền ${fmt(r.mergeShippingFee)} — giữ nguyên nội dung có sẵn để mình xác nhận nhanh hơn.</p>
+            <p class="qr-note">Quét mã để chuyển khoản đúng số tiền ${fmt(r.mergeShippingFee)}.</p>
           ` : '')
         }
       </div>
@@ -1308,7 +1308,7 @@ function renderLookupResult(){
     <div class="qr-box">
       <p style="font-weight:700; margin-bottom:10px;">Chưa nhận được thanh toán cho đơn này</p>
       <img src="${o.qrUrl}" alt="Mã QR chuyển khoản" class="qr-img">
-      <p class="qr-note">Quét mã để chuyển khoản đúng số tiền ${fmt(o.dueAmount != null ? o.dueAmount : (o.grandTotal || o.total))}${o.codShipping ? ' (chưa gồm phí ship — phần này sẽ thu khi giao hàng)' : ''} — giữ nguyên nội dung có sẵn mã đơn <b>DH${o.id}</b> để mình xác nhận nhanh hơn.</p>
+      <p class="qr-note">Quét mã để chuyển khoản đúng số tiền ${fmt(o.dueAmount != null ? o.dueAmount : (o.grandTotal || o.total))}${o.codShipping ? ' (chưa gồm phí ship — phần này sẽ thu khi giao hàng)' : ''}.</p>
     </div>
   ` : '';
 
@@ -1446,8 +1446,9 @@ function renderDrawer(){
     const qrBlock = lastOrder && lastOrder.qrUrl ? `
       <div class="qr-box">
         <img src="${lastOrder.qrUrl}" alt="Mã QR chuyển khoản" class="qr-img">
-        <p class="qr-note">Quét mã để chuyển khoản đúng số tiền ${fmt(lastOrder.dueAmount != null ? lastOrder.dueAmount : (lastOrder.grandTotal || lastOrder.total))}${lastOrder.codShipping ? ' (chưa gồm phí ship — phần này sẽ thu khi giao hàng)' : ''} — giữ nguyên nội dung có sẵn mã đơn <b>DH${lastOrder.id}</b> để mình xác nhận nhanh hơn.</p>
+        <p class="qr-note">Quét mã để chuyển khoản đúng số tiền ${fmt(lastOrder.dueAmount != null ? lastOrder.dueAmount : (lastOrder.grandTotal || lastOrder.total))}${lastOrder.codShipping ? ' (chưa gồm phí ship — phần này sẽ thu khi giao hàng)' : ''}.</p>
       </div>
+      <div class="checkout-notice">⏰ Đơn sẽ tự động huỷ nếu chưa thanh toán trong vòng <b>1 giờ</b> kể từ lúc đặt, mong quý khách thông cảm cho sự bất tiện này. Chúc quý khách lướt ngắm vui, hốt được nhiều deal hời!!</div>
     ` : '';
     list.innerHTML = `
       <div class="success-box">
@@ -1515,6 +1516,7 @@ function renderDrawer(){
       <div class="foot-row" id="cf-addons-row" style="display:${selectedAddOnIds.size > 0 ? 'flex' : 'none'};"><span>Dịch vụ kèm thêm</span><b id="cf-addons-fee">Đang tính...</b></div>
       <div class="foot-row"><span>Tổng giá trị đơn</span><b id="cf-grand-total">${fmt(total)}</b></div>
       <div class="foot-row" style="font-weight:700;"><span>${wantCodShipping ? 'Cần chuyển khoản (chưa gồm ship)' : 'Cần chuyển khoản'}</span><b id="cf-due-amount">${fmt(total)}</b></div>
+      <div class="checkout-notice">⏰ Đơn sẽ tự động huỷ nếu chưa thanh toán trong vòng <b>1 giờ</b> kể từ lúc đặt.</div>
       <button class="checkout-btn" id="submitOrderBtn" onclick="submitOrder()">Gửi đơn hàng</button>
     `;
     const previewItems = checkoutEntries.map(e => ({ id: e.p.id, variantIndex: e.variantIndex, qty: e.qty }));
