@@ -1549,7 +1549,7 @@ function renderDrawer(){
       <div class="success-box">
         <div class="emoji">🎉</div>
         <h3>Cảm ơn bạn đã đặt hàng!</h3>
-        <p>Đơn hàng #${lastOrder ? lastOrder.id : ''} đã được ghi nhận. Mình sẽ liên hệ xác nhận và gửi hàng qua SPX sớm nhất.</p>
+        <p>Deal sẽ được giữ trong 1 giờ, mời quý khách thanh toán để đơn hàng được chốt ạ. Nếu cần hỗ trợ, hãy liên hệ ngay với U nhen ^^</p>
         <p style="font-size:13px; color:var(--ink-soft); margin-top:6px;">Chưa kịp chuyển khoản ngay? Không sao — vào mục "Tra cứu đơn hàng" ở đầu trang bất cứ lúc nào để xem lại mã QR này.</p>
       </div>
       ${shippingSummary}
