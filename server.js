@@ -1527,6 +1527,14 @@ app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
     if (paid === true && status === undefined && current.status === 'moi') {
       patch.status = 'cho_giao';
     }
+    // MỚI: lưu mã vận đơn thủ công (không phải xoá trắng) cho đơn đang ở bước
+    // sớm ("Mới"/"Chờ giao hàng") thì tự chuyển sang "Đang giao" luôn - giống
+    // hệt cách file Excel gắn mã vận đơn hàng loạt đang làm, để 2 cách thao tác
+    // nhất quán với nhau. Không tự chuyển nếu admin đang tự chọn trạng thái khác
+    // trong cùng lúc, và không lùi trạng thái nếu đơn đã ở bước xa hơn.
+    if (trackingCode && status === undefined && (current.status === 'moi' || current.status === 'cho_giao')) {
+      patch.status = 'dang_giao';
+    }
     // MỚI: nếu đổi bất kỳ phần nào của địa chỉ, ghép lại chuỗi địa chỉ gộp hiển thị gọn
     if (wantsAddressChange) {
       const p = province !== undefined ? province : current.province;
