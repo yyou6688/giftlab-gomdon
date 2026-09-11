@@ -154,15 +154,15 @@
 
 <script>
 // ============================================================
-// MỚI: trang dùng chung cho MỌI shop - không gắn cứng link/STK của riêng shop nào nữa.
-// Toàn bộ thông tin lấy từ tham số trên link - đúng link tool sinh ra khi bấm "Copy link chung".
+// CẤU HÌNH — gắn thẳng link Apps Script + QR của bạn, dùng luôn không cần cấu hình gì thêm
 // ============================================================
+const sheetUrl = "https://script.google.com/macros/s/AKfycbxhjHa3W9uYtrEQi7Tnx3aJxHEPKbly5z03ojWEnVNWgHlcVFQbc2g6Iz-Xas1u3-sxaA/exec";
+const SHEET_TOKEN = "2026giftlabbyU"; // đúng SECRET_TOKEN trong Apps Script
+const QR_STK = "0011004237789";
+const QR_TEN = "DO THI VIET ANH"; // tên chủ TK viết KHÔNG DẤU, đúng chuẩn ngân hàng
+const QR_BANK_BIN = "970436"; // Vietcombank
+
 const params = new URLSearchParams(location.search);
-const sheetUrl = params.get("su");
-const publicToken = params.get("pt");
-const QR_STK = params.get("qs") || "";
-const QR_TEN = params.get("qn") || "";
-const QR_BANK_BIN = params.get("qb") || "";
 // MỚI: sản phẩm định sẵn cho đợt gom (Phương án A) - có thì hiện chọn số lượng,
 // không có thì rơi về đúng hành vi cũ (khách tự gõ tổng tiền).
 const PRESET_NAME = params.get("pn") || "";
@@ -170,19 +170,11 @@ const PRESET_PRICE = Number(params.get("pp")) || 0;
 const hasPreset = !!(PRESET_NAME && PRESET_PRICE > 0);
 let presetQty = 1;
 
-if (!sheetUrl || !publicToken){
-  // MỚI: thiếu tham số -> dừng hẳn ở đây, không chạy phần code bên dưới (combobox,
-  // gắn nút...) vì các phần tử formCard sẽ không còn hiển thị nữa.
-  document.getElementById("formCard").style.display = "none";
-  document.getElementById("errorCard").style.display = "block";
-  document.getElementById("errorMsg").textContent = "Link không hợp lệ — thiếu thông tin. Nhắn shop xin gửi lại link nhé.";
-} else {
-  runPage();
-}
+runPage();
 
 function runPage(){
 if (!QR_STK || !QR_TEN || !QR_BANK_BIN){
-  document.getElementById("showQrBtn").style.display = "none"; // shop chưa gắn QR vào link này
+  document.getElementById("showQrBtn").style.display = "none"; // chưa gắn QR
 }
 
 // MỚI: bật khối sản phẩm định sẵn nếu link có kèm pn+pp, ẩn ô gõ tay tổng tiền
@@ -205,7 +197,7 @@ async function callApi(payload){
   const res = await fetch(sheetUrl, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(Object.assign({ token: publicToken }, payload))
+    body: JSON.stringify(Object.assign({ token: SHEET_TOKEN }, payload))
   });
   return res.json();
 }
