@@ -115,15 +115,14 @@
 
 <script>
 // ============================================================
-// MỚI: trang dùng chung cho MỌI shop - không gắn cứng link/mã của riêng shop nào nữa.
-// Toàn bộ thông tin (link Apps Script, mã công khai, mã đơn, token riêng của đơn) lấy
-// thẳng từ tham số trên link - đúng link tool sinh ra khi bấm "Copy link xác nhận".
+// CẤU HÌNH — gắn thẳng link Apps Script của bạn, dùng luôn không cần cấu hình gì thêm
 // ============================================================
+const sheetUrl = "https://script.google.com/macros/s/AKfycbxhjHa3W9uYtrEQi7Tnx3aJxHEPKbly5z03ojWEnVNWgHlcVFQbc2g6Iz-Xas1u3-sxaA/exec";
+const SHEET_TOKEN = "2026giftlabbyU"; // đúng SECRET_TOKEN trong Apps Script
+
 const params = new URLSearchParams(location.search);
 const orderId = params.get("id");
 const confirmToken = params.get("ct");
-const sheetUrl = params.get("su");
-const publicToken = params.get("pt");
 
 const loadingCard = document.getElementById("loadingCard");
 const errorCard = document.getElementById("errorCard");
@@ -141,7 +140,7 @@ async function callApi(payload){
   const res = await fetch(sheetUrl, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(Object.assign({ token: publicToken }, payload))
+    body: JSON.stringify(Object.assign({ token: SHEET_TOKEN }, payload))
   });
   return res.json();
 }
@@ -201,7 +200,7 @@ wardCombo = createCombobox(document.getElementById("wardBox"), [], "", (val)=>{ 
 
 // ---------- tải dữ liệu đơn ----------
 (async function init(){
-  if (!orderId || !confirmToken || !sheetUrl || !publicToken){ showError("Link không hợp lệ — thiếu thông tin."); return; }
+  if (!orderId || !confirmToken){ showError("Link không hợp lệ — thiếu thông tin."); return; }
   try {
     const data = await callApi({ action: "get_order_for_confirm", orderId, confirmToken });
     if (data.status === "locked"){ showError("Đơn này đã được xác nhận trước đó rồi. Cần sửa lại thì nhắn shop gửi cho bạn link mới nhé."); return; }
