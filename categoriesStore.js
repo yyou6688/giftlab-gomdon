@@ -108,14 +108,26 @@ async function sheetSaveCategories(categories) {
 }
 
 // ---------- API dùng chung, server.js chỉ gọi 2 hàm dưới đây ----------
+// MỚI: cache tạm 15 giây trong bộ nhớ - trang chủ tự gọi lại API này mỗi 20 giây,
+// gọi thẳng Sheets mỗi lần dễ vượt quota Google (giống flashSalesStore.js/promotionsStore.js)
+let categoriesCache = null;
+let categoriesCacheAt = 0;
+const CATEGORIES_CACHE_TTL_MS = 15000;
 async function listCategories() {
+  const now = Date.now();
+  if (categoriesCache && (now - categoriesCacheAt) < CATEGORIES_CACHE_TTL_MS) return categoriesCache;
   const list = useSheets ? await sheetListCategories() : fileListCategories();
   // MỚI: đảm bảo mọi danh mục đều có sortMode hợp lệ, kể cả danh mục cũ/mặc định
   // chưa từng lưu qua đường Sheets (sortMode do sheetListCategories/rowToCategory gán)
-  return list.map(c => VALID_SORT_MODES.includes(c.sortMode) ? c : { ...c, sortMode: 'manual' });
+  const result = list.map(c => VALID_SORT_MODES.includes(c.sortMode) ? c : { ...c, sortMode: 'manual' });
+  categoriesCache = result;
+  categoriesCacheAt = now;
+  return result;
 }
 async function saveCategories(categories) {
-  return useSheets ? sheetSaveCategories(categories) : fileSaveCategories(categories);
+  const result = await (useSheets ? sheetSaveCategories(categories) : fileSaveCategories(categories));
+  categoriesCache = null; // MỚI: vừa lưu xong - xoá cache để lần đọc kế tiếp lấy đúng dữ liệu mới ngay
+  return result;
 }
 
 module.exports = { listCategories, saveCategories, useSheets };
