@@ -1523,7 +1523,7 @@ app.patch('/api/orders/bulk', requireAdmin, async (req, res) => {
 
 app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  const { status, paid, trackingCode, province, ward, addressDetail, mergeShippingPaid } = req.body; // MỚI: mergeShippingPaid
+  const { status, paid, trackingCode, province, ward, addressDetail, customerName, phone, mergeShippingPaid } = req.body; // MỚI: customerName, phone
   // MỚI: 'da_giao' = Đã giao, đang chờ 2 ngày để tự động chuyển "Hoàn thành"
   const validStatus = ['moi', 'cho_giao', 'dang_giao', 'da_giao', 'hoan_thanh', 'huy'];
   if (status !== undefined && !validStatus.includes(status)) {
@@ -1533,11 +1533,19 @@ app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
     const current = await ordersStore.getOrderById(id);
     if (!current) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
 
-    // MỚI: chặn huỷ đơn / đổi địa chỉ nếu đơn đã có mã vận đơn (đã bàn giao cho SPX)
+    // MỚI: chặn huỷ đơn / đổi địa chỉ / đổi tên-SĐT người nhận nếu đơn đã có mã vận
+    // đơn (đã bàn giao cho SPX, thông tin trên vận đơn không thể sửa được nữa)
     const wantsCancel = status === 'huy';
     const wantsAddressChange = province !== undefined || ward !== undefined || addressDetail !== undefined;
-    if ((wantsCancel || wantsAddressChange) && current.trackingCode) {
-      return res.status(400).json({ error: 'Đơn đã có mã vận đơn, không thể huỷ hoặc đổi địa chỉ nữa.' });
+    const wantsRecipientChange = customerName !== undefined || phone !== undefined; // MỚI
+    if ((wantsCancel || wantsAddressChange || wantsRecipientChange) && current.trackingCode) {
+      return res.status(400).json({ error: 'Đơn đã có mã vận đơn, không thể huỷ hoặc đổi thông tin nữa.' });
+    }
+    if (customerName !== undefined && !customerName.trim()) {
+      return res.status(400).json({ error: 'Tên người nhận không được để trống' });
+    }
+    if (phone !== undefined && !phone.trim()) {
+      return res.status(400).json({ error: 'Số điện thoại không được để trống' });
     }
 
     const patch = {};
@@ -1547,6 +1555,8 @@ app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
     if (province !== undefined) patch.province = province;   // MỚI
     if (ward !== undefined) patch.ward = ward;                 // MỚI
     if (addressDetail !== undefined) patch.addressDetail = addressDetail; // MỚI
+    if (customerName !== undefined) patch.customerName = customerName.trim(); // MỚI
+    if (phone !== undefined) patch.phone = phone.trim(); // MỚI
     // MỚI: tích "Đã nhận tiền" cho đơn còn đang ở trạng thái "Mới" thì tự chuyển
     // sang "Chờ giao hàng" luôn, đỡ phải đổi trạng thái thủ công thêm 1 bước.
     // Không tự chuyển nếu admin đang tự chọn trạng thái khác trong cùng lúc, và
@@ -1634,11 +1644,13 @@ app.post('/api/orders/cancel', async (req, res) => {
   }
 });
 
-// MỚI: khách tự đổi địa chỉ nhận hàng - chỉ khi đơn CHƯA có mã vận đơn
+// MỚI: khách tự đổi thông tin nhận hàng (tên, SĐT, địa chỉ) - chỉ khi đơn CHƯA có mã vận đơn.
+// `phone` dùng để XÁC THỰC đúng chủ đơn (khớp với SĐT hiện có trên đơn) - nếu khách muốn
+// đổi sang SĐT mới thì gửi thêm `newPhone`, tách riêng để không lẫn với SĐT xác thực.
 app.post('/api/orders/update-address', async (req, res) => {
-  const { orderId, phone, province, ward, addressDetail } = req.body;
-  if (!orderId || !phone || !province || !ward || !addressDetail) {
-    return res.status(400).json({ error: 'Thiếu thông tin — cần đủ mã đơn, số điện thoại, Tỉnh/Thành, Xã/Phường và địa chỉ chi tiết' });
+  const { orderId, phone, customerName, newPhone, province, ward, addressDetail } = req.body;
+  if (!orderId || !phone || !customerName || !province || !ward || !addressDetail) {
+    return res.status(400).json({ error: 'Thiếu thông tin — cần đủ mã đơn, số điện thoại, tên người nhận, Tỉnh/Thành, Xã/Phường và địa chỉ chi tiết' });
   }
   try {
     const order = await ordersStore.getOrderById(orderId);
@@ -1647,17 +1659,22 @@ app.post('/api/orders/update-address', async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy đơn hàng — kiểm tra lại mã đơn và số điện thoại' });
     }
     if (order.trackingCode) {
-      return res.status(400).json({ error: 'Đơn đã có mã vận đơn (đang được xử lý giao hàng), không thể đổi địa chỉ. Liên hệ shop để được hỗ trợ.' });
+      return res.status(400).json({ error: 'Đơn đã có mã vận đơn (đang được xử lý giao hàng), không thể đổi thông tin. Liên hệ shop để được hỗ trợ.' });
     }
     if (order.status === 'huy' || order.status === 'hoan_thanh') {
-      return res.status(400).json({ error: 'Đơn này không còn ở trạng thái có thể đổi địa chỉ.' });
+      return res.status(400).json({ error: 'Đơn này không còn ở trạng thái có thể đổi thông tin.' });
     }
     const address = `${addressDetail}, ${ward}, ${province}`;
-    const updated = await ordersStore.updateOrder(Number(orderId), { province, ward, addressDetail, address });
+    const patch = { province, ward, addressDetail, address, customerName: customerName.trim() };
+    // MỚI: chỉ đổi SĐT khi khách thực sự nhập số MỚI (khác số đang xác thực)
+    if (newPhone && String(newPhone).replace(/\s|-/g, '') !== normalizedPhone) {
+      patch.phone = newPhone.trim();
+    }
+    const updated = await ordersStore.updateOrder(Number(orderId), patch);
     res.json(updated);
   } catch (err) {
-    console.error('Lỗi khách tự đổi địa chỉ:', err.message);
-    res.status(500).json({ error: 'Không đổi được địa chỉ, thử lại giúp mình' });
+    console.error('Lỗi khách tự đổi thông tin đơn hàng:', err.message);
+    res.status(500).json({ error: 'Không lưu được thay đổi, thử lại giúp mình' });
   }
 });
 
