@@ -1305,7 +1305,7 @@ function renderLookupResult(){
   const canModify = !o.trackingCode && o.status !== 'huy' && o.status !== 'hoan_thanh';
   const modifyActionsBlock = canModify ? `
     <div style="display:flex; gap:8px; margin:10px 0; flex-wrap:wrap;">
-      <button onclick="openEditAddress()" style="font-size:13px; padding:9px 14px;">✏️ Đổi địa chỉ nhận hàng</button>
+      <button onclick="openEditAddress()" style="font-size:13px; padding:9px 14px;">✏️ Đổi thông tin nhận hàng</button>
       <button class="danger" onclick="cancelMyOrder()" style="font-size:13px; padding:9px 14px;">Huỷ đơn hàng</button>
     </div>
   ` : '';
@@ -1371,12 +1371,14 @@ function renderEditAddressForm(){
   const o = lookupOrderResult;
   const title = document.getElementById('drawerTitle');
   const list = document.getElementById('drawerList');
-  title.textContent = 'Đổi địa chỉ nhận hàng';
+  title.textContent = 'Đổi thông tin nhận hàng';
   const provinceOptions = vnAddress
     ? vnAddress.provinces.map(p => `<option value="${p}" ${o.province===p?'selected':''}>${p}</option>`).join('')
     : '';
   list.innerHTML = `
     <div class="back-link" onclick="drawerView='lookup-result'; renderDrawer();">← Quay lại đơn hàng</div>
+    <div class="form-field"><label>Tên người nhận</label><input type="text" id="ea-customer-name" value="${escapeHtml(o.customerName || '')}"></div>
+    <div class="form-field"><label>Số điện thoại nhận hàng</label><input type="text" id="ea-phone" value="${escapeHtml(o.phone || '')}"></div>
     <p style="font-size:13px; color:var(--ink-soft); margin-bottom:12px;">Địa chỉ hiện tại: ${o.address}</p>
     <div class="form-field searchable-select">
       <label>Tỉnh/Thành phố</label>
@@ -1399,19 +1401,21 @@ function renderEditAddressForm(){
       </div>
     </div>
     <div class="form-field"><label>Địa chỉ chi tiết</label><textarea id="ea-address-detail" placeholder="Số nhà, tên đường...">${o.addressDetail || ''}</textarea></div>
-    <button class="checkout-btn" id="saveAddressBtn" onclick="submitEditAddress()">Lưu địa chỉ mới</button>
+    <button class="checkout-btn" id="saveAddressBtn" onclick="submitEditAddress()">Lưu thông tin mới</button>
     <p id="editAddressMsg" style="font-size:13px; margin-top:10px; color:#B23A3A;"></p>
   `;
 }
 
 async function submitEditAddress(){
   const o = lookupOrderResult;
+  const customerName = document.getElementById('ea-customer-name').value.trim();
+  const newPhone = document.getElementById('ea-phone').value.trim();
   const province = document.getElementById('cf-province').value;
   const ward = document.getElementById('cf-ward').value;
   const addressDetail = document.getElementById('ea-address-detail').value.trim();
   const msgEl = document.getElementById('editAddressMsg');
-  if(!province || !ward || !addressDetail){
-    msgEl.textContent = 'Vui lòng chọn đủ Tỉnh/Thành, Xã/Phường và nhập địa chỉ chi tiết.';
+  if(!customerName || !newPhone || !province || !ward || !addressDetail){
+    msgEl.textContent = 'Vui lòng nhập đủ Tên người nhận, SĐT, chọn Tỉnh/Thành, Xã/Phường và nhập địa chỉ chi tiết.';
     return;
   }
   const btn = document.getElementById('saveAddressBtn');
@@ -1419,14 +1423,15 @@ async function submitEditAddress(){
   try{
     const res = await fetch('/api/orders/update-address', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId: o.id, phone: lookupPhone, province, ward, addressDetail })
+      body: JSON.stringify({ orderId: o.id, phone: lookupPhone, customerName, newPhone, province, ward, addressDetail })
     });
     const data = await res.json();
     if(!res.ok){
       msgEl.textContent = data.error || 'Không lưu được, thử lại.';
-      btn.disabled = false; btn.textContent = 'Lưu địa chỉ mới';
+      btn.disabled = false; btn.textContent = 'Lưu thông tin mới';
       return;
     }
+    lookupPhone = data.phone; // MỚI: nếu vừa đổi SĐT, cập nhật luôn để lần tra cứu/thao tác sau vẫn đúng
     lookupOrderResult = data;
     drawerView = 'lookup-result';
     renderDrawer();
