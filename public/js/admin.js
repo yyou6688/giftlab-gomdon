@@ -356,7 +356,7 @@ function renderOrders(){
       </div>
       <div class="order-meta">
         ${escapeHtml(o.phone)} · ${escapeHtml(o.address)}
-        ${!o.trackingCode ? `<button onclick="toggleAddressEdit(${o.id})" style="font-size:11px; padding:3px 8px; margin-left:6px;">${expandedAddressEditId===o.id ? 'Đóng' : 'Sửa địa chỉ'}</button>` : ' <span style="color:var(--ink-soft);">(đã có mã vận đơn, không sửa được)</span>'}
+        ${!o.trackingCode ? `<button onclick="toggleAddressEdit(${o.id})" style="font-size:11px; padding:3px 8px; margin-left:6px;">${expandedAddressEditId===o.id ? 'Đóng' : 'Sửa thông tin'}</button>` : ' <span style="color:var(--ink-soft);">(đã có mã vận đơn, không sửa được)</span>'}
         <br>
         ${new Date(o.createdAt).toLocaleString('vi-VN')}
         ${(orderAutomationSettings.autoCancelUnpaidEnabled && !o.paid && o.status !== 'huy' && !o.trackingCode) ? ` · <span class="order-countdown" data-created="${o.createdAt}" style="color:#C0392B; font-weight:700;"></span>` : ''}
@@ -417,7 +417,7 @@ function renderOrders(){
   `).join('');
 }
 
-// MỚI: mở/đóng form sửa địa chỉ ngay trong thẻ đơn hàng
+// MỚI: mở/đóng form sửa thông tin (tên, SĐT, địa chỉ) ngay trong thẻ đơn hàng
 let expandedAddressEditId = null;
 function toggleAddressEdit(id){
   expandedAddressEditId = expandedAddressEditId === id ? null : id;
@@ -427,26 +427,32 @@ function renderAddressEditForm(o){
   return `
     <div style="background:#FAFAFC; border:1px solid var(--line); border-radius:10px; padding:12px; margin:8px 0;">
       <div class="form-row">
+        <div class="form-field"><label>Tên người nhận</label><input type="text" id="addr-name-${o.id}" value="${escapeHtml(o.customerName || '')}"></div>
+        <div class="form-field"><label>Số điện thoại</label><input type="text" id="addr-phone-${o.id}" value="${escapeHtml(o.phone || '')}"></div>
+      </div>
+      <div class="form-row">
         <div class="form-field"><label>Tỉnh/Thành phố</label><input type="text" id="addr-province-${o.id}" value="${escapeHtml(o.province || '')}"></div>
         <div class="form-field"><label>Xã/Phường</label><input type="text" id="addr-ward-${o.id}" value="${escapeHtml(o.ward || '')}"></div>
       </div>
       <div class="form-field"><label>Địa chỉ chi tiết</label><input type="text" id="addr-detail-${o.id}" value="${escapeHtml(o.addressDetail || '')}"></div>
-      <button onclick="saveAddressEdit(${o.id})">Lưu địa chỉ mới</button>
+      <button onclick="saveAddressEdit(${o.id})">Lưu thông tin</button>
       <p id="addr-msg-${o.id}" style="font-size:12px; margin-top:6px; color:#B23A3A;"></p>
     </div>
   `;
 }
 async function saveAddressEdit(id){
+  const customerName = document.getElementById(`addr-name-${id}`).value.trim();
+  const phone = document.getElementById(`addr-phone-${id}`).value.trim();
   const province = document.getElementById(`addr-province-${id}`).value.trim();
   const ward = document.getElementById(`addr-ward-${id}`).value.trim();
   const addressDetail = document.getElementById(`addr-detail-${id}`).value.trim();
   const msgEl = document.getElementById(`addr-msg-${id}`);
-  if(!province || !ward || !addressDetail){
-    msgEl.textContent = 'Nhập đủ Tỉnh/Thành, Xã/Phường và địa chỉ chi tiết.';
+  if(!customerName || !phone || !province || !ward || !addressDetail){
+    msgEl.textContent = 'Nhập đủ Tên người nhận, SĐT, Tỉnh/Thành, Xã/Phường và địa chỉ chi tiết.';
     return;
   }
-  const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ province, ward, addressDetail }) });
-  if(res.ok){ expandedAddressEditId = null; showAdminToast('✅ Đã lưu địa chỉ'); await tryLoadOrders(); }
+  const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ customerName, phone, province, ward, addressDetail }) });
+  if(res.ok){ expandedAddressEditId = null; showAdminToast('✅ Đã lưu thông tin'); await tryLoadOrders(); }
   else { const data = await res.json().catch(() => ({})); msgEl.textContent = data.error || 'Không lưu được, thử lại.'; }
 }
 
