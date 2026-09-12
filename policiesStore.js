@@ -119,11 +119,24 @@ async function sheetSaveContent(data) {
 }
 
 // ---------- API dùng chung, server.js chỉ gọi 2 hàm dưới đây ----------
+// MỚI: cache tạm 15 giây trong bộ nhớ - trang chủ tự gọi lại API này mỗi 20 giây,
+// gọi thẳng Sheets mỗi lần dễ vượt quota Google (giống flashSalesStore.js/promotionsStore.js)
+let policiesCache = null;
+let policiesCacheAt = 0;
+const POLICIES_CACHE_TTL_MS = 15000;
 async function getContent() {
-  return useSheets ? sheetGetContent() : fileGetContent();
+  if (!useSheets) return fileGetContent();
+  const now = Date.now();
+  if (policiesCache && (now - policiesCacheAt) < POLICIES_CACHE_TTL_MS) return policiesCache;
+  const data = await sheetGetContent();
+  policiesCache = data;
+  policiesCacheAt = now;
+  return data;
 }
 async function saveContent(data) {
-  return useSheets ? sheetSaveContent(data) : fileSaveContent(data);
+  const result = await (useSheets ? sheetSaveContent(data) : fileSaveContent(data));
+  policiesCache = null; // MỚI: vừa lưu xong - xoá cache để lần đọc kế tiếp lấy đúng dữ liệu mới ngay
+  return result;
 }
 
 module.exports = { getContent, saveContent, useSheets };
