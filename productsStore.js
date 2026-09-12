@@ -118,12 +118,26 @@ async function sheetSaveProducts(products) {
 }
 
 // ---------- API dùng chung, server.js chỉ gọi 2 hàm dưới đây ----------
+// MỚI: cache tạm 15 giây trong bộ nhớ - đọc sản phẩm bị gọi rất nhiều (mỗi lần khách
+// xem trang, thêm giỏ hàng, đặt đơn...), gọi thẳng Sheets mỗi lần dễ vượt quota Google
+// (giống flashSalesStore.js/promotionsStore.js). Đánh đổi: có thể trễ tối đa 15 giây
+// nếu vừa sửa giá/kho ở trang quản trị - chấp nhận được vì đổi lại tránh sập cả trang.
+let productsCache = null;
+let productsCacheAt = 0;
+const PRODUCTS_CACHE_TTL_MS = 15000;
 async function listProducts() {
+  const now = Date.now();
+  if (productsCache && (now - productsCacheAt) < PRODUCTS_CACHE_TTL_MS) return productsCache;
   const products = useSheets ? await sheetListProducts() : await fileListProducts();
-  return normalizeAndSortProducts(products);
+  const result = normalizeAndSortProducts(products);
+  productsCache = result;
+  productsCacheAt = now;
+  return result;
 }
 async function saveProducts(products) {
-  return useSheets ? sheetSaveProducts(products) : fileSaveProducts(products);
+  const result = await (useSheets ? sheetSaveProducts(products) : fileSaveProducts(products));
+  productsCache = null; // MỚI: vừa lưu xong - xoá cache để lần đọc kế tiếp lấy đúng dữ liệu mới ngay
+  return result;
 }
 
 module.exports = { listProducts, saveProducts, useSheets };
