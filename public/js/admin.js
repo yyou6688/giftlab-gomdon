@@ -792,7 +792,7 @@ function exportSpxExcel(){
           weightKg, '', '', '',
           '', o.total, 'N', 'N',
           'N', '', '',
-          hasCod ? 'Y' : 'N', hasCod ? codAmount : '', 'N', 'Người gửi trả',
+          hasCod ? 'Y' : 'N', hasCod ? codAmount : '', 'N', hasCod ? 'Người nhận trả' : 'Người gửi trả',
           '', '', ''
         ]);
       } else {
