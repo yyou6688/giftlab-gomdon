@@ -509,7 +509,7 @@ function renderOrders(){
       <div style="display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap;">
         <input type="text" id="tracking-${o.id}" placeholder="Mã vận đơn SPX (nếu có)" value="${escapeHtml(o.trackingCode || '')}" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--line); font-size:13px;">
         <button onclick="updateTracking(${o.id})">Lưu mã vận đơn</button>
-        ${o.trackingCode ? `<a href="https://spx.vn/track" target="_blank" rel="noopener" style="font-size:12px; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:#fff; color:var(--rose-deep); font-weight:600; text-decoration:none;">📦 Tra cứu SPX (dán mã: ${escapeHtml(o.trackingCode)})</a>` : ''}
+        ${o.trackingCode ? `<button type="button" data-track-code="${escapeHtml(o.trackingCode)}" onclick="trackSpx(this.dataset.trackCode)" style="font-size:12px; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:#fff; color:var(--rose-deep); font-weight:600; cursor:pointer;">📦 Tra cứu SPX (đã copy mã, dán vào ô tìm kiếm)</button>` : ''}
       </div>
       <div class="order-top">
         <b>Tổng cộng: ${fmt(o.grandTotal || o.total)}${o.codShipping ? ` <span style="font-weight:400; font-size:12px; color:var(--ink-soft);">(cần CK: ${fmt((o.total||0) + (o.giftWrapFee||0) + (o.addOnsFee||0))})</span>` : ''}</b>
@@ -1905,6 +1905,14 @@ function drawShareQr(id){
   const input = document.getElementById(`share-link-${id}`);
   if(!canvas || !input || typeof QRious === 'undefined') return;
   new QRious({ element: canvas, value: input.value, size: 140, background: '#ffffff', foreground: '#3C3489' });
+}
+
+function trackSpx(code){
+  if(!code) return;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(code).catch(() => {});
+  }
+  window.open('https://spx.vn/track', '_blank', 'noopener');
 }
 
 function copyShareLink(id){
