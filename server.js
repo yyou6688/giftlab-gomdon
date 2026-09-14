@@ -813,7 +813,7 @@ app.get('/api/order-automation', async (req, res) => {
     res.json(settings);
   } catch (err) {
     console.error('Lỗi đọc cấu hình tự động hoá đơn hàng:', err.message);
-    res.json({ autoCancelUnpaidEnabled: true }); // lỗi thì mặc định coi như đang bật, an toàn hơn
+    res.json({ autoCancelUnpaidEnabled: true, autoCancelHours: 1 }); // lỗi thì mặc định coi như đang bật, an toàn hơn
   }
 });
 // MỚI: admin bật/tắt tính năng này ở tab Đơn hàng
@@ -1678,6 +1678,59 @@ app.post('/api/orders/update-address', async (req, res) => {
   }
 });
 
+// MỚI (đồng bộ từ bản shop): huỷ hàng loạt nhiều đơn cùng lúc (dùng khi tick chọn nhiều
+// đơn trong trang admin). Chỉ huỷ được đơn CHƯA có mã vận đơn và chưa huỷ/hoàn thành -
+// đơn không đủ điều kiện sẽ báo lại lý do.
+app.post('/api/orders/bulk-cancel', requireAdmin, async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Không có đơn nào để huỷ' });
+  }
+  const results = { success: [], failed: [] };
+  for (const rawId of ids) {
+    const id = Number(rawId);
+    try {
+      const current = await ordersStore.getOrderById(id);
+      if (!current) { results.failed.push({ id, reason: 'Không tìm thấy đơn' }); continue; }
+      if (current.trackingCode) { results.failed.push({ id, reason: 'Đã có mã vận đơn' }); continue; }
+      if (current.status === 'huy' || current.status === 'hoan_thanh') { results.failed.push({ id, reason: 'Đã huỷ/hoàn thành' }); continue; }
+      await ordersStore.updateOrder(id, { status: 'huy' });
+      await adjustStock(current.items, +1); // cộng trả lại tồn kho, giống huỷ từng đơn
+      results.success.push(id);
+    } catch (err) {
+      console.error(`Lỗi huỷ đơn #${id}:`, err.message);
+      results.failed.push({ id, reason: 'Lỗi hệ thống' });
+    }
+  }
+  res.json(results);
+});
+
+// MỚI (đồng bộ từ bản shop): xoá hàng loạt nhiều đơn cùng lúc (dùng khi tick chọn nhiều
+// đơn trong trang admin)
+app.post('/api/orders/bulk-delete', requireAdmin, async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Không có đơn nào để xoá' });
+  }
+  const results = { success: [], failed: [] };
+  for (const rawId of ids) {
+    const id = Number(rawId);
+    try {
+      // MỚI: giống xoá 1 đơn - đơn nào chưa từng huỷ thì cộng trả lại kho trước khi xoá
+      const current = await ordersStore.getOrderById(id);
+      if (current && current.status !== 'huy') {
+        await adjustStock(current.items, +1);
+      }
+      const deleted = await ordersStore.deleteOrder(id);
+      if (deleted) results.success.push(id); else results.failed.push(id);
+    } catch (err) {
+      console.error(`Lỗi xoá đơn #${id}:`, err.message);
+      results.failed.push(id);
+    }
+  }
+  res.json(results);
+});
+
 // MỚI: xoá thủ công 1 đơn hàng rác/trùng/spam
 app.delete('/api/orders/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
@@ -1718,16 +1771,18 @@ autoCompleteDeliveredOrders();
 setInterval(autoCompleteDeliveredOrders, 60 * 60 * 1000);
 
 // ============================================================
-// MỚI: tự động huỷ đơn CHƯA thanh toán sau 1 tiếng kể từ lúc đặt, nhả lại tồn kho.
-// Áp dụng cho MỌI đơn đang chờ thanh toán tính TỪ LÚC ĐOẠN CODE NÀY BẮT ĐẦU CHẠY -
-// kể cả đơn đã đặt TRƯỚC ĐÓ mà lúc kiểm tra đã quá 1 tiếng (chạy 1 lần ngay khi
-// khởi động để quét luôn các đơn cũ, không chỉ đơn mới), rồi lặp lại kiểm tra mỗi
-// 5 phút để đơn được huỷ gần đúng thời điểm 1 tiếng, không phải đợi tới cả giờ sau.
-const UNPAID_AUTO_CANCEL_MS = 60 * 60 * 1000; // 1 tiếng
+// MỚI: tự động huỷ đơn CHƯA thanh toán sau số giờ đã thiết lập (trang quản trị, tab
+// Đơn hàng - mặc định 1 tiếng như trước giờ, chỉnh được thành số giờ khác). Áp dụng cho
+// MỌI đơn đang chờ thanh toán tính TỪ LÚC ĐOẠN CODE NÀY BẮT ĐẦU CHẠY - kể cả đơn đã đặt
+// TRƯỚC ĐÓ mà lúc kiểm tra đã quá hạn (chạy 1 lần ngay khi khởi động để quét luôn các
+// đơn cũ, không chỉ đơn mới), rồi lặp lại kiểm tra mỗi 5 phút để đơn được huỷ gần đúng
+// thời điểm đã hẹn, không phải đợi tới cả giờ sau.
 async function autoCancelUnpaidOrders() {
   try {
-    const settings = await orderAutomationStore.getSettings(); // MỚI: admin có thể tạm tắt tính năng này
+    const settings = await orderAutomationStore.getSettings(); // MỚI: admin có thể tạm tắt tính năng này / đổi số giờ
     if (!settings.autoCancelUnpaidEnabled) return;
+    const hours = Number(settings.autoCancelHours) > 0 ? Number(settings.autoCancelHours) : 1; // MỚI
+    const unpaidAutoCancelMs = hours * 60 * 60 * 1000; // MỚI
     const orders = await ordersStore.listOrders();
     const now = Date.now();
     const dueOrders = orders.filter(o =>
@@ -1735,12 +1790,12 @@ async function autoCancelUnpaidOrders() {
       o.status !== 'huy' &&
       !o.trackingCode && // phòng hờ - đơn đã có mã vận đơn thì tuyệt đối không tự huỷ
       o.createdAt &&
-      (now - new Date(o.createdAt).getTime()) >= UNPAID_AUTO_CANCEL_MS
+      (now - new Date(o.createdAt).getTime()) >= unpaidAutoCancelMs
     );
     for (const o of dueOrders) {
       await ordersStore.updateOrder(o.id, { status: 'huy' });
       await adjustStock(o.items, +1); // nhả lại tồn kho đã trừ lúc đặt đơn
-      console.log(`>>> Tự động huỷ đơn #${o.id} (chưa thanh toán quá 1 tiếng), đã nhả lại tồn kho`);
+      console.log(`>>> Tự động huỷ đơn #${o.id} (chưa thanh toán quá ${hours} giờ), đã nhả lại tồn kho`);
     }
   } catch (err) {
     console.error('Lỗi khi tự động huỷ đơn chưa thanh toán:', err.message);
