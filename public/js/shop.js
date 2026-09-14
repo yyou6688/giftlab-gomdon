@@ -63,6 +63,14 @@ function escapeHtml(str){
     .replace(/'/g, '&#39;');
 }
 
+function trackSpx(code){
+  if(!code) return;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(code).catch(() => {});
+  }
+  window.open('https://spx.vn/track', '_blank', 'noopener');
+}
+
 // MỚI: khối chọn gói quà - chỉ hiện khi admin đang bật (shippingConfig.giftWrap.active),
 // mô tả + các mốc giá lấy trực tiếp từ cấu hình admin đã lưu
 function renderGiftWrapCheckbox(){
@@ -1297,7 +1305,7 @@ function renderLookupResult(){
       <p style="font-size:13px; margin:2px 0;">Đơn vị vận chuyển: SPX (Shopee Express)</p>
       <p style="font-size:13px; margin:2px 0;">Mã vận đơn: ${o.trackingCode ? `<b>${o.trackingCode}</b>` : 'Đang cập nhật'}</p>
       <p style="font-size:13px; margin:2px 0;">Trạng thái: ${STATUS_LABEL[o.status] || o.status}</p>
-      ${o.trackingCode ? `<a href="https://spx.vn/track" target="_blank" rel="noopener" style="display:inline-block; margin-top:8px; font-size:13px; font-weight:600; color:var(--rose-deep);">📦 Mở trang tra cứu SPX (dán mã ${o.trackingCode} vào ô tra cứu)</a>` : ''}
+      ${o.trackingCode ? `<button type="button" data-track-code="${escapeHtml(o.trackingCode)}" onclick="trackSpx(this.dataset.trackCode)" style="display:inline-block; margin-top:8px; font-size:13px; font-weight:600; color:var(--rose-deep); background:none; border:none; padding:0; cursor:pointer; text-decoration:underline;">📦 Mở trang tra cứu SPX (đã copy mã, dán vào ô tìm kiếm)</button>` : ''}
     </div>
   ` : '';
 
