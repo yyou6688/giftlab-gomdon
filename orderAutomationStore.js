@@ -64,7 +64,8 @@ const SHEET_RANGE = 'OrderAutomation!A:B';
 const HEADER_ROW = ['Key', 'ValueJSON'];
 
 const DEFAULT_SETTINGS = {
-  autoCancelUnpaidEnabled: true
+  autoCancelUnpaidEnabled: true,
+  autoCancelHours: 1 // MỚI (đồng bộ từ bản shop): số giờ giữ đơn trước khi tự huỷ - có thể chỉnh trong trang quản trị, mặc định giữ đúng 1 giờ như trước giờ
 };
 
 // ---------- Backend: file JSON (chỉ dùng khi chưa cấu hình Google Sheets) ----------
