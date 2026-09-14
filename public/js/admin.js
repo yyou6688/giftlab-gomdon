@@ -84,7 +84,7 @@ let flashSaleProductSearch = '';       // tìm sản phẩm để thêm vào ch�
 let flashSaleProductCategoryFilter = 'all'; // lọc theo danh mục khi tìm sản phẩm thêm vào
 let flashSaleExpandedSkuProductId = null;   // sản phẩm đang mở để sửa từng SKU riêng
 let flashSaleSelectedProductIds = new Set(); // sản phẩm đang tick chọn để thêm vào chương trình đang mở
-let orderAutomationSettings = { autoCancelUnpaidEnabled: true }; // MỚI: bật/tắt tự động huỷ đơn chưa thanh toán
+let orderAutomationSettings = { autoCancelUnpaidEnabled: true, autoCancelHours: 1 }; // MỚI: bật/tắt + số giờ tự huỷ đơn chưa thanh toán (đồng bộ từ bản shop)
 
 const STATUS_LABEL = {
   moi: 'Mới',
@@ -139,9 +139,27 @@ async function toggleAutoCancelUnpaid(enabled){
   }
 }
 
-// MỚI: đếm ngược thời gian còn lại trước khi đơn CHƯA THANH TOÁN bị tự động huỷ (1 tiếng
-// kể từ lúc đặt) - chạy 1 lần duy nhất, tự cập nhật MỌI thẻ .order-countdown đang có trên
-// trang mỗi giây (không cần render lại toàn bộ danh sách đơn)
+// MỚI (đồng bộ từ bản shop): admin chỉnh số giờ giữ đơn trước khi tự huỷ
+async function pickAutoCancelHours(h){
+  const res = await apiFetch('/api/order-automation', { method: 'PATCH', body: JSON.stringify({ autoCancelHours: h }) });
+  if(res.ok){
+    orderAutomationSettings = await res.json();
+    showAdminToast('✅ Đã cập nhật số giờ tự huỷ đơn');
+    renderOrders();
+  } else {
+    alert('Không lưu được cấu hình, thử lại.');
+  }
+}
+function pickAutoCancelHoursCustom(v){
+  const h = parseInt(v, 10);
+  if(!h || h < 1) return;
+  pickAutoCancelHours(h);
+}
+
+// MỚI: đếm ngược thời gian còn lại trước khi đơn CHƯA THANH TOÁN bị tự động huỷ (theo
+// đúng số giờ đang cấu hình - orderAutomationSettings.autoCancelHours) - chạy 1 lần duy
+// nhất, tự cập nhật MỌI thẻ .order-countdown đang có trên trang mỗi giây (không cần
+// render lại toàn bộ danh sách đơn)
 function formatCountdownRemain(ms){
   if(ms <= 0) return '0 phút';
   const totalMin = Math.floor(ms / 60000);
@@ -151,8 +169,9 @@ function formatCountdownRemain(ms){
   return `${mm}:${ss}`;
 }
 setInterval(() => {
+  const hours = Number(orderAutomationSettings.autoCancelHours) > 0 ? Number(orderAutomationSettings.autoCancelHours) : 1; // MỚI
   document.querySelectorAll('.order-countdown').forEach(el => {
-    const deadline = new Date(el.dataset.created).getTime() + 60*60*1000;
+    const deadline = new Date(el.dataset.created).getTime() + hours*60*60*1000; // MỚI: theo số giờ tuỳ chỉnh
     const remain = deadline - Date.now();
     el.textContent = remain > 0 ? `⏰ Tự huỷ sau ${formatCountdownRemain(remain)}` : '⏰ Đang chờ tự huỷ...';
   });
@@ -169,6 +188,76 @@ function getOrderItemImage(it){
   const variant = (p.variants && p.variants[it.variantIndex]) || null;
   return (variant && variant.image) || p.image || '';
 }
+
+// MỚI: bấm vào ảnh SKU trong tab Đơn hàng để xem phóng to - có thể chuyển qua lại giữa
+// các ảnh SKU khác trong CÙNG đơn đó (máy tính dùng phím ←/→ hoặc nút mũi tên, điện
+// thoại/tablet vuốt trái/phải ngay trên ảnh). Dùng chung 1 khay overlay cho cả trang.
+let currentZoomGallery = [];
+let currentZoomIndex = 0;
+let orderImageGalleries = {}; // MỚI: khay ảnh SKU của từng đơn (khoá theo mã đơn), dùng khi bấm phóng to ảnh trong tab Đơn hàng
+
+function openImageZoom(e, gallery, index){
+  e.stopPropagation();
+  currentZoomGallery = gallery;
+  currentZoomIndex = index;
+  ensureImageZoomOverlay();
+  renderImageZoom();
+  document.getElementById('imageZoomOverlay').classList.add('show');
+}
+function closeImageZoom(){
+  const overlay = document.getElementById('imageZoomOverlay');
+  if(overlay) overlay.classList.remove('show');
+}
+function navImageZoom(delta){
+  if(currentZoomGallery.length < 2) return;
+  currentZoomIndex = (currentZoomIndex + delta + currentZoomGallery.length) % currentZoomGallery.length;
+  renderImageZoom();
+}
+function renderImageZoom(){
+  const img = document.getElementById('imageZoomImg');
+  if(img) img.src = currentZoomGallery[currentZoomIndex] || '';
+  const multi = currentZoomGallery.length > 1;
+  const prevBtn = document.getElementById('imageZoomPrev');
+  const nextBtn = document.getElementById('imageZoomNext');
+  if(prevBtn) prevBtn.style.display = multi ? 'flex' : 'none';
+  if(nextBtn) nextBtn.style.display = multi ? 'flex' : 'none';
+  const dots = document.getElementById('imageZoomDots');
+  if(dots){
+    dots.style.display = multi ? 'flex' : 'none';
+    dots.innerHTML = currentZoomGallery.map((_, i) => `<span class="image-zoom-dot ${i===currentZoomIndex ? 'active' : ''}"></span>`).join('');
+  }
+}
+function ensureImageZoomOverlay(){
+  if(document.getElementById('imageZoomOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'imageZoomOverlay';
+  overlay.className = 'image-zoom-overlay';
+  overlay.innerHTML = `
+    <button id="imageZoomPrev" class="image-zoom-nav-btn" style="left:16px;" onclick="event.stopPropagation(); navImageZoom(-1);">‹</button>
+    <img id="imageZoomImg" alt="">
+    <button id="imageZoomNext" class="image-zoom-nav-btn" style="right:16px;" onclick="event.stopPropagation(); navImageZoom(1);">›</button>
+    <div id="imageZoomDots" class="image-zoom-dots"></div>
+  `;
+  overlay.addEventListener('click', (e) => { if(e.target === overlay) closeImageZoom(); });
+  // Vuốt trái/phải trên điện thoại/tablet để chuyển ảnh
+  let touchStartX = null;
+  overlay.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  overlay.addEventListener('touchend', (e) => {
+    if(touchStartX === null) return;
+    const delta = e.changedTouches[0].clientX - touchStartX;
+    if(Math.abs(delta) > 40) navImageZoom(delta > 0 ? -1 : 1);
+    touchStartX = null;
+  });
+  document.body.appendChild(overlay);
+}
+// Phím ←/→ để chuyển ảnh, Esc để đóng - chỉ hoạt động khi khay đang mở
+document.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('imageZoomOverlay');
+  if(!overlay || !overlay.classList.contains('show')) return;
+  if(e.key === 'ArrowLeft') navImageZoom(-1);
+  else if(e.key === 'ArrowRight') navImageZoom(1);
+  else if(e.key === 'Escape') closeImageZoom();
+});
 
 // ---------- Đăng nhập ----------
 async function login(){
@@ -286,10 +375,23 @@ function renderOrders(){
 
   const filterBar = `
     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#fff; border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:10px;">
-      <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
-        <input type="checkbox" ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'checked' : ''} onchange="toggleAutoCancelUnpaid(this.checked)">
-        ⏰ Tự động huỷ đơn chưa thanh toán sau 1 giờ
-      </label>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+          <input type="checkbox" ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'checked' : ''} onchange="toggleAutoCancelUnpaid(this.checked)">
+          ⏰ Tự động huỷ đơn chưa thanh toán sau
+        </label>
+        ${[1, 2, 24, 48].map(h => `
+          <button type="button" onclick="pickAutoCancelHours(${h})"
+            style="font-size:12px; font-weight:600; padding:5px 11px; border-radius:999px; cursor:pointer;
+            border:1px solid ${orderAutomationSettings.autoCancelHours===h ? 'var(--sage-deep)' : 'var(--line)'};
+            background:${orderAutomationSettings.autoCancelHours===h ? 'var(--sage-deep)' : '#fff'};
+            color:${orderAutomationSettings.autoCancelHours===h ? '#fff' : 'var(--ink)'};">${h} giờ</button>
+        `).join('')}
+        <input type="number" min="1" placeholder="Tự nhập" value="${[1,2,24,48].includes(orderAutomationSettings.autoCancelHours) ? '' : (orderAutomationSettings.autoCancelHours || '')}"
+          onchange="pickAutoCancelHoursCustom(this.value)"
+          style="width:78px; padding:5px 8px; border-radius:8px; border:1px solid var(--line); font-size:12px;">
+        <span style="font-size:12px; color:var(--ink-soft);">giờ</span>
+      </div>
       <span style="font-size:12px; color:${orderAutomationSettings.autoCancelUnpaidEnabled ? '#2E7D46' : '#C0392B'}; font-weight:700;">
         ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'ĐANG BẬT' : 'ĐANG TẮT — cần tự tick "Đã nhận tiền" bằng tay'}
       </span>
@@ -364,19 +466,28 @@ function renderOrders(){
       </div>
       ${expandedAddressEditId===o.id ? renderAddressEditForm(o) : ''}
       <div class="order-items">
-        ${o.items.map(it => {
-          const img = getOrderItemImage(it);
-          const thumb = img
-            ? `<a href="${img}" target="_blank" rel="noopener"><img src="${img}" alt="" class="order-item-thumb"></a>`
-            : `<div class="order-item-thumb order-item-thumb-empty">🎁</div>`;
-          return `<div class="order-item-row">
-            <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-              ${thumb}
-              <span>${escapeHtml(it.name)}${it.variantName ? ' — ' + escapeHtml(it.variantName) : ''} × ${it.qty}</span>
-            </div>
-            <span>${fmt(it.price*it.qty)}</span>
-          </div>`;
-        }).join('')}
+        ${(() => {
+          // MỚI: gộp ảnh mọi SKU trong đơn này thành 1 khay ảnh chung, để bấm vào ảnh nào
+          // cũng phóng to được và chuyển qua lại xem hết ảnh của đơn ngay tại chỗ. Lưu khay
+          // ảnh vào biến toàn cục (khoá theo mã đơn) thay vì nhúng thẳng vào chuỗi HTML, để
+          // tránh URL ảnh có ký tự đặc biệt làm hỏng thuộc tính onclick.
+          const gallery = o.items.map(it => getOrderItemImage(it)).filter(Boolean);
+          orderImageGalleries[o.id] = gallery;
+          return o.items.map(it => {
+            const img = getOrderItemImage(it);
+            const galleryIdx = img ? gallery.indexOf(img) : -1;
+            const thumb = img
+              ? `<img src="${escapeHtml(img)}" alt="" class="order-item-thumb" style="cursor:zoom-in;" onclick="openImageZoom(event, orderImageGalleries[${o.id}], ${galleryIdx})">`
+              : `<div class="order-item-thumb order-item-thumb-empty">🎁</div>`;
+            return `<div class="order-item-row">
+              <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                ${thumb}
+                <span>${escapeHtml(it.name)}${it.variantName ? ' — ' + escapeHtml(it.variantName) : ''} × ${it.qty}</span>
+              </div>
+              <span>${fmt(it.price*it.qty)}</span>
+            </div>`;
+          }).join('');
+        })()}
       </div>
       <div class="order-meta" style="margin-top:4px;">
         Phí ship: ${fmt(o.shippingFee || 0)}${o.freeshipApplied ? ` · <span style="color:var(--sage-deep); font-weight:600;">Freeship (${escapeHtml(o.freeshipApplied)})</span>` : ''}${o.giftWrap ? ` · <span style="color:#B23A3A; font-weight:600;">🎁 Gói quà (${o.giftWrapFee > 0 ? fmt(o.giftWrapFee) : 'miễn phí'})</span>` : ''}${(o.addOns && o.addOns.length) ? ` · <span style="color:var(--sage-deep); font-weight:600;">🧩 ${o.addOns.map(a => escapeHtml(a.label)).join(', ')} (${fmt(o.addOnsFee || 0)})</span>` : ''}
@@ -482,43 +593,46 @@ function toggleSelectAllOrders(checked){
   renderOrders();
 }
 
-// MỚI: huỷ hàng loạt các đơn đã tick chọn - gọi lại đúng API huỷ từng đơn 1 (giữ
-// nguyên các kiểm tra sẵn có: chặn đơn đã có mã vận đơn, hoàn trả tồn kho khi huỷ).
-// Đơn nào không huỷ được (VD đã có mã vận đơn) sẽ được báo riêng, các đơn còn lại vẫn huỷ bình thường.
+// MỚI (đồng bộ từ bản shop): huỷ hàng loạt các đơn đã tick chọn - gọi 1 lần API
+// /api/orders/bulk-cancel thay vì lặp gọi API huỷ từng đơn (nhanh hơn khi chọn nhiều đơn),
+// vẫn giữ nguyên các kiểm tra sẵn có: chặn đơn đã có mã vận đơn, hoàn trả tồn kho khi huỷ.
 async function bulkCancelOrders(){
   const ids = Array.from(selectedOrderIds);
   if(ids.length === 0) return;
   if(!confirm(`Huỷ ${ids.length} đơn hàng đã chọn? Không thể hoàn tác.`)) return;
-  const failed = [];
-  for(const id of ids){
-    const res = await apiFetch(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'huy' }) });
-    if(!res.ok) failed.push(id);
-  }
+  const res = await apiFetch('/api/orders/bulk-cancel', { method: 'POST', body: JSON.stringify({ ids }) });
   selectedOrderIds.clear();
   await tryLoadOrders();
-  if(failed.length){
-    alert(`Không huỷ được ${failed.length} đơn (có thể đã có mã vận đơn): #${failed.join(', #')}`);
+  if(res.ok){
+    const data = await res.json();
+    if(data.failed && data.failed.length){
+      alert(`Không huỷ được ${data.failed.length} đơn (có thể đã có mã vận đơn): #${data.failed.map(f => f.id).join(', #')}`);
+    } else {
+      showAdminToast(`✅ Đã huỷ ${data.success.length} đơn`);
+    }
   } else {
-    showAdminToast(`✅ Đã huỷ ${ids.length} đơn`);
+    alert('Không huỷ được, thử lại.');
   }
 }
 
-// MỚI: xoá hàng loạt các đơn đã tick chọn - gọi lại đúng API xoá từng đơn 1
+// MỚI (đồng bộ từ bản shop): xoá hàng loạt các đơn đã tick chọn - gọi 1 lần API
+// /api/orders/bulk-delete thay vì lặp gọi API xoá từng đơn
 async function bulkDeleteOrders(){
   const ids = Array.from(selectedOrderIds);
   if(ids.length === 0) return;
   if(!confirm(`Xoá hẳn ${ids.length} đơn hàng đã chọn? Không thể hoàn tác.`)) return;
-  const failed = [];
-  for(const id of ids){
-    const res = await apiFetch(`/api/orders/${id}`, { method: 'DELETE' });
-    if(!res.ok) failed.push(id);
-  }
+  const res = await apiFetch('/api/orders/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) });
   selectedOrderIds.clear();
   await tryLoadOrders();
-  if(failed.length){
-    alert(`Không xoá được ${failed.length} đơn: #${failed.join(', #')}`);
+  if(res.ok){
+    const data = await res.json();
+    if(data.failed && data.failed.length){
+      alert(`Không xoá được ${data.failed.length} đơn: #${data.failed.join(', #')}`);
+    } else {
+      showAdminToast(`✅ Đã xoá ${data.success.length} đơn`);
+    }
   } else {
-    showAdminToast(`✅ Đã xoá ${ids.length} đơn`);
+    alert('Không xoá được, thử lại.');
   }
 }
 
