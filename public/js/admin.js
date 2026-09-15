@@ -5,9 +5,18 @@
 let adminKey = sessionStorage.getItem('giftlab_admin_key') || '';
 let orders = [];
 let products = [];
-// MỚI: các khu vực (Quản lý danh mục, Nhập Shopee, Banner trang chủ...) đang bị thu gọn -
-// nhớ trong lúc còn ở trang quản trị, không bị bung lại mỗi khi 1 khu khác được lưu
-let collapsedSections = new Set();
+// MỚI: các khu vực (Quản lý danh mục, Nhập Shopee, Banner trang chủ, Bộ lọc đơn hàng,
+// từng mục Chính sách...) đang bị thu gọn - nhớ trong lúc còn ở trang quản trị, không bị
+// bung lại mỗi khi 1 khu khác được lưu. Mặc định TẤT CẢ các khu đều thu gọn sẵn khi mới
+// vào trang quản trị, cần dùng khu nào thì bấm mở khu đó ra.
+let collapsedSections = new Set([
+  'cat-manage', 'shopee-import', 'bulk-image', 'add-product',
+  'sc-weight', 'sc-freeship', 'sc-giftwrap', 'sc-addons',
+  'hp-banner', 'hp-collections', 'hp-featured', 'hp-trust',
+  'orders-filter',
+  'policy-about', 'policy-terms', 'policy-shipping', 'policy-returns',
+  'policy-privacy', 'policy-payment', 'policy-contact'
+]);
 
 // MỚI: khu vực có thể thu gọn - tiêu đề + icon mũi tên, bấm vào để đóng/mở, dùng chung
 // cho cả 3 tab (Sản phẩm, Vận chuyển, Trang chủ)
@@ -374,45 +383,48 @@ function renderOrders(){
   const allSelected = filtered.length > 0 && filtered.every(o => selectedOrderIds.has(o.id));
 
   const filterBar = `
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#fff; border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:10px;">
-      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
-          <input type="checkbox" ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'checked' : ''} onchange="toggleAutoCancelUnpaid(this.checked)">
-          ⏰ Tự động huỷ đơn chưa thanh toán sau
-        </label>
-        ${[1, 2, 24, 48].map(h => `
-          <button type="button" onclick="pickAutoCancelHours(${h})"
-            style="font-size:12px; font-weight:600; padding:5px 11px; border-radius:999px; cursor:pointer;
-            border:1px solid ${orderAutomationSettings.autoCancelHours===h ? 'var(--sage-deep)' : 'var(--line)'};
-            background:${orderAutomationSettings.autoCancelHours===h ? 'var(--sage-deep)' : '#fff'};
-            color:${orderAutomationSettings.autoCancelHours===h ? '#fff' : 'var(--ink)'};">${h} giờ</button>
-        `).join('')}
-        <input type="number" min="1" placeholder="Tự nhập" value="${[1,2,24,48].includes(orderAutomationSettings.autoCancelHours) ? '' : (orderAutomationSettings.autoCancelHours || '')}"
-          onchange="pickAutoCancelHoursCustom(this.value)"
-          style="width:78px; padding:5px 8px; border-radius:8px; border:1px solid var(--line); font-size:12px;">
-        <span style="font-size:12px; color:var(--ink-soft);">giờ</span>
+    ${sectionHeaderHtml('orders-filter', '🔍 Bộ lọc & tự động huỷ đơn')}
+    <div id="orders-filter-body" style="${sectionBodyStyle('orders-filter')}">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#fff; border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; cursor:pointer;">
+            <input type="checkbox" ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'checked' : ''} onchange="toggleAutoCancelUnpaid(this.checked)">
+            ⏰ Tự động huỷ đơn chưa thanh toán sau
+          </label>
+          ${[1, 2, 24, 48].map(h => `
+            <button type="button" onclick="pickAutoCancelHours(${h})"
+              style="font-size:12px; font-weight:600; padding:5px 11px; border-radius:999px; cursor:pointer;
+              border:1px solid ${orderAutomationSettings.autoCancelHours===h ? 'var(--sage-deep)' : 'var(--line)'};
+              background:${orderAutomationSettings.autoCancelHours===h ? 'var(--sage-deep)' : '#fff'};
+              color:${orderAutomationSettings.autoCancelHours===h ? '#fff' : 'var(--ink)'};">${h} giờ</button>
+          `).join('')}
+          <input type="number" min="1" placeholder="Tự nhập" value="${[1,2,24,48].includes(orderAutomationSettings.autoCancelHours) ? '' : (orderAutomationSettings.autoCancelHours || '')}"
+            onchange="pickAutoCancelHoursCustom(this.value)"
+            style="width:78px; padding:5px 8px; border-radius:8px; border:1px solid var(--line); font-size:12px;">
+          <span style="font-size:12px; color:var(--ink-soft);">giờ</span>
+        </div>
+        <span style="font-size:12px; color:${orderAutomationSettings.autoCancelUnpaidEnabled ? '#2E7D46' : '#C0392B'}; font-weight:700;">
+          ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'ĐANG BẬT' : 'ĐANG TẮT — cần tự tick "Đã nhận tiền" bằng tay'}
+        </span>
       </div>
-      <span style="font-size:12px; color:${orderAutomationSettings.autoCancelUnpaidEnabled ? '#2E7D46' : '#C0392B'}; font-weight:700;">
-        ${orderAutomationSettings.autoCancelUnpaidEnabled ? 'ĐANG BẬT' : 'ĐANG TẮT — cần tự tick "Đã nhận tiền" bằng tay'}
-      </span>
-    </div>
-    <div class="form-row" style="margin-bottom:14px;">
-      <div class="form-field">
-        <input id="orderPhoneFilterInput" placeholder="Tìm theo số điện thoại..." value="${orderPhoneFilter}" oninput="orderPhoneFilter=this.value; renderOrders();">
-      </div>
-      <div class="form-field">
-        <select style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);" onchange="orderStatusFilter=this.value; renderOrders();">
-          <option value="all" ${orderStatusFilter==='all'?'selected':''}>Tất cả trạng thái</option>
-          <option value="cho_thanh_toan" ${orderStatusFilter==='cho_thanh_toan'?'selected':''}>Chờ thanh toán</option>
-          ${Object.entries(STATUS_LABEL).filter(([k]) => k !== 'moi').map(([k,v]) => `<option value="${k}" ${orderStatusFilter===k?'selected':''}>${v}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-field">
-        <select style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);" onchange="orderSourceFilter=this.value; renderOrders();">
-          <option value="all" ${orderSourceFilter==='all'?'selected':''}>Tất cả nguồn đơn</option>
-          <option value="website" ${orderSourceFilter==='website'?'selected':''}>Khách tự đặt trên web</option>
-          <option value="tach-don" ${orderSourceFilter==='tach-don'?'selected':''}>Tách đơn (Messenger)</option>
-        </select>
+      <div class="form-row" style="margin-bottom:14px;">
+        <div class="form-field">
+          <input id="orderPhoneFilterInput" placeholder="Tìm theo số điện thoại..." value="${orderPhoneFilter}" oninput="orderPhoneFilter=this.value; renderOrders();">
+        </div>
+        <div class="form-field">
+          <select style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);" onchange="orderStatusFilter=this.value; renderOrders();">
+            <option value="all" ${orderStatusFilter==='all'?'selected':''}>Tất cả trạng thái</option>
+            <option value="cho_thanh_toan" ${orderStatusFilter==='cho_thanh_toan'?'selected':''}>Chờ thanh toán</option>
+            ${Object.entries(STATUS_LABEL).filter(([k]) => k !== 'moi').map(([k,v]) => `<option value="${k}" ${orderStatusFilter===k?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <select style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);" onchange="orderSourceFilter=this.value; renderOrders();">
+            <option value="all" ${orderSourceFilter==='all'?'selected':''}>Tất cả nguồn đơn</option>
+            <option value="website" ${orderSourceFilter==='website'?'selected':''}>Khách tự đặt trên web</option>
+            <option value="tach-don" ${orderSourceFilter==='tach-don'?'selected':''}>Tách đơn (Messenger)</option>
+          </select>
+        </div>
       </div>
     </div>
   `;
@@ -3594,14 +3606,16 @@ function renderPoliciesTab(){
     <p style="font-size:12px; color:var(--ink-soft); margin-bottom:14px;">Nội dung dưới đây hiển thị công khai ở cuối trang chủ và tại <code>/policy.html</code> - cần điền đầy đủ, đúng thực tế shop trước khi nộp hồ sơ thông báo với Bộ Công Thương.</p>
     ${POLICY_KEYS.map(p => `
       <div class="add-product-form">
-        <h3>${p.label}</h3>
-        <div class="form-field">
-          <label>Tiêu đề hiển thị</label>
-          <input type="text" value="${escapeHtml(policiesContent[p.key].title)}" oninput="policiesContent['${p.key}'].title=this.value">
-        </div>
-        <div class="form-field">
-          <label>Nội dung</label>
-          <textarea rows="8" style="width:100%; font-family:inherit; font-size:14px; padding:10px; border-radius:8px; border:1px solid var(--line);" oninput="policiesContent['${p.key}'].content=this.value">${escapeHtml(policiesContent[p.key].content)}</textarea>
+        ${sectionHeaderHtml('policy-' + p.key, p.label)}
+        <div id="policy-${p.key}-body" style="${sectionBodyStyle('policy-' + p.key)}">
+          <div class="form-field">
+            <label>Tiêu đề hiển thị</label>
+            <input type="text" value="${escapeHtml(policiesContent[p.key].title)}" oninput="policiesContent['${p.key}'].title=this.value">
+          </div>
+          <div class="form-field">
+            <label>Nội dung</label>
+            <textarea rows="8" style="width:100%; font-family:inherit; font-size:14px; padding:10px; border-radius:8px; border:1px solid var(--line);" oninput="policiesContent['${p.key}'].content=this.value">${escapeHtml(policiesContent[p.key].content)}</textarea>
+          </div>
         </div>
       </div>
     `).join('')}
