@@ -51,6 +51,21 @@ const STATUS_LABEL = {
 function fmt(n){ return n.toLocaleString('vi-VN') + 'đ'; }
 function saveCart(){ localStorage.setItem('giftlab_cart', JSON.stringify(cart)); }
 
+// MỚI: tự chèn tham số resize/nén vào URL ảnh Cloudinary trước khi hiển thị, để trình
+// duyệt khách chỉ tải đúng kích thước ảnh cần dùng ở từng chỗ - giảm mạnh băng thông
+// tiêu tốn mỗi lượt khách vào xem trang, tránh vượt hạn mức miễn phí của Cloudinary
+// (dùng CHUNG tài khoản với giftlab-shop, nên sửa ở đây cũng góp phần giảm tải chung).
+// Ảnh KHÔNG phải từ Cloudinary (VD: logo tĩnh trong repo) được giữ nguyên, không đụng vào.
+function cldResize(url, width){
+  if(!url || typeof url !== 'string') return url;
+  const marker = '/upload/';
+  const idx = url.indexOf(marker);
+  if(idx === -1 || !url.includes('res.cloudinary.com')) return url;
+  const before = url.slice(0, idx + marker.length);
+  const after = url.slice(idx + marker.length);
+  return `${before}w_${width},q_auto,f_auto,c_limit/${after}`;
+}
+
 // MỚI: khử ký tự đặc biệt HTML trước khi chèn text do admin tự nhập (mô tả gói quà,
 // tên dịch vụ kèm thêm...) vào innerHTML, tránh hỏng cấu trúc trang nếu có ký tự lạ
 function escapeHtml(str){
@@ -248,7 +263,7 @@ function renderHeroSlide(){
   }
   if(heroSlideIndex >= slides.length) heroSlideIndex = 0;
   const slide = slides[heroSlideIndex];
-  img.src = slide.image;
+  img.src = cldResize(slide.image, 1200); // MỚI: banner to nhất trang, vẫn cần độ phân giải khá cao
   img.style.display = 'block'; // MỚI: chỉ hiện ảnh khi đã có src thật, tránh chớp ảnh cũ lúc tải trang
   if(slide.link){
     img.style.cursor = 'pointer';
@@ -294,7 +309,7 @@ function renderCollections(){
   wrap.style.setProperty('--collections-cols', cols);
   wrap.innerHTML = items.map(c => `
     <div class="collection-tile" onclick="filterByCategory('${c.category || 'all'}')" style="cursor:pointer;">
-      <img src="${c.image}" alt="${c.label || ''}">
+      <img src="${cldResize(c.image, 500)}" alt="${c.label || ''}">
       <div class="collection-label">${c.label || ''}</div>
     </div>
   `).join('');
@@ -437,7 +452,7 @@ function renderGrid(){
 // MỚI: 1 thẻ sản phẩm - dùng chung cho lưới sản phẩm chính và khu "Sản phẩm nổi bật"
 function renderProductCard(p){
   const outOfStock = p.totalStock <= 0;
-  const imgTag = p.image ? `<img src="${p.image}" alt="${p.name}" loading="lazy">` : '';
+  const imgTag = p.image ? `<img src="${cldResize(p.image, 400)}" alt="${p.name}" loading="lazy">` : '';
   const freeshipBadge = qualifiesForFreeship(p) ? `<img src="images/freeship-badge.png" alt="Freeship" class="freeship-badge">` : '';
   // MỚI: nếu sản phẩm đang trong 1 chương trình khuyến mãi/Flash Sale, hiện giá gốc gạch
   // ngang + giá đã giảm + nhãn SALE - kể cả khi chương trình CHƯA tới giờ (nhãn đổi thành
@@ -905,13 +920,13 @@ function renderVariantPicker(){
   const title = document.getElementById('drawerTitle');
   const list = document.getElementById('drawerList');
   title.textContent = 'Chọn phân loại';
-  const imgTag = p.image ? `<div class="product-detail-img"><img src="${p.image}" alt="${p.name}"></div>` : '';
+  const imgTag = p.image ? `<div class="product-detail-img"><img src="${cldResize(p.image, 600)}" alt="${p.name}"></div>` : '';
   const zoomGallery = getVariants(p).map(v => v.image).filter(Boolean);
-  currentZoomGallery = zoomGallery;
+  currentZoomGallery = zoomGallery.map(u => cldResize(u, 1200)); // MỚI: bản to hơn dành riêng cho lúc phóng to xem ảnh
   const rows = getVariants(p).map((v, idx) => `
     <div class="variant-row ${v.stock<=0 ? 'disabled' : ''}" onclick="selectVariantAndClose('${p.id}', ${idx})">
       <div style="display:flex; align-items:center; gap:10px;">
-        ${v.image ? `<img src="${v.image}" alt="" onclick="openImageZoom(event, ${zoomGallery.indexOf(v.image)})" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
+        ${v.image ? `<img src="${cldResize(v.image, 100)}" alt="" onclick="openImageZoom(event, ${zoomGallery.indexOf(v.image)})" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
         <div>
           <div class="vname">${v.name || 'Mặc định'}</div>
           <div class="vmeta">${v.stock>0 ? 'Còn ' + v.stock : 'Hết hàng'}</div>
@@ -980,7 +995,7 @@ function renderProductDetail(){
   const multiImg = gallery.length > 1;
 
   const thumbsHtml = gallery.map((img, idx) => `
-    <img src="${img}" class="detail-thumb ${idx === detailMainImageIndex ? 'active' : ''}" onclick="detailMainImageIndex=${idx}; renderProductDetail();">
+    <img src="${cldResize(img, 150)}" class="detail-thumb ${idx === detailMainImageIndex ? 'active' : ''}" onclick="detailMainImageIndex=${idx}; renderProductDetail();">
   `).join('');
 
   // Nút mũi tên (tự ẩn trên điện thoại qua CSS, chỉ vuốt) + chấm tròn báo vị trí ảnh
@@ -991,11 +1006,11 @@ function renderProductDetail(){
   ` : '';
 
   const variantZoomGallery = variants.map(v => v.image).filter(Boolean);
-  currentZoomGallery = variantZoomGallery;
+  currentZoomGallery = variantZoomGallery.map(u => cldResize(u, 1200)); // MỚI: bản to hơn dành riêng cho lúc phóng to xem ảnh
   const variantsHtml = variants.map((v, idx) => `
     <div class="variant-row ${v.stock<=0 ? 'disabled' : ''}" onclick="addToCartFromDetail('${p.id}', ${idx})">
       <div style="display:flex; align-items:center; gap:10px;">
-        ${v.image ? `<img src="${v.image}" alt="" onclick="openImageZoom(event, ${variantZoomGallery.indexOf(v.image)})" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
+        ${v.image ? `<img src="${cldResize(v.image, 100)}" alt="" onclick="openImageZoom(event, ${variantZoomGallery.indexOf(v.image)})" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex:0 0 auto;cursor:zoom-in;">` : ''}
         <div>
           <div class="vname">${v.name || 'Mặc định'}</div>
           <div class="vmeta">${v.stock>0 ? 'Còn ' + v.stock : 'Hết hàng'}</div>
@@ -1008,7 +1023,7 @@ function renderProductDetail(){
   panel.innerHTML = `
     <div class="product-detail-close" onclick="closeProductDetail(true)">✕</div>
     <div class="detail-gallery">
-      <div class="detail-main-img">${mainImg ? `<img src="${mainImg}" alt="${p.name}">` : '🎁'}${navBtnsHtml}</div>
+      <div class="detail-main-img">${mainImg ? `<img src="${cldResize(mainImg, 900)}" alt="${p.name}">` : '🎁'}${navBtnsHtml}</div>
       ${gallery.length > 1 ? `<div class="detail-thumbs">${thumbsHtml}</div>` : ''}
     </div>
     <div class="detail-info">
@@ -1662,7 +1677,7 @@ function renderDrawer(){
     return `
     <div class="line-item">
       <input type="checkbox" class="cart-item-check" ${checked ? 'checked' : ''} onchange="toggleCartSelect('${key}', this.checked)">
-      <div class="li-icon">${(e.variant.image || e.p.image) ? `<img src="${e.variant.image || e.p.image}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">` : '🎁'}</div>
+      <div class="li-icon">${(e.variant.image || e.p.image) ? `<img src="${cldResize(e.variant.image || e.p.image, 100)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">` : '🎁'}</div>
       <div class="li-body">
         <div class="li-name">${e.p.name}${e.variant.name ? ' — ' + e.variant.name : ''}</div>
         <div class="li-price">${e.onSale ? `<span class="card-price-old" style="font-size:11px;">${fmt(e.variant.originalPrice)}</span> ` : ''}${fmt(e.variant.price)}${e.onSale && !e.saleIsActive ? ' <span style="font-size:11px; color:#B26A00; font-weight:600;">(giá xem trước)</span>' : ''}</div>
