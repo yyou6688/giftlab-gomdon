@@ -632,7 +632,10 @@ app.post('/api/upload-image', requireAdmin, upload.single('image'), async (req, 
     // MỚI: ảnh HEIC (định dạng riêng của iPhone) không hiện được trên Chrome/Android -
     // tự chuyển sang JPG ngay lúc tải lên Cloudinary để hiện đúng trên mọi thiết bị
     const isHeic = /\.(heic|heif)$/i.test(req.file.originalname || '') || (req.file.mimetype || '').includes('heic');
-    const uploadOptions = { folder: 'giftlab-shop' };
+    // MỚI: giới hạn kích thước tối đa lúc LƯU ảnh (chỉ thu nhỏ nếu ảnh gốc to hơn, không
+    // phóng to ảnh nhỏ) + tự nén chất lượng vừa phải - tránh lưu nguyên ảnh gốc siêu to từ
+    // điện thoại, vừa tốn dung lượng Cloudinary vừa khiến trang tải chậm không cần thiết.
+    const uploadOptions = { folder: 'giftlab-shop', transformation: [{ width: 1600, height: 1600, crop: 'limit', quality: 'auto:good' }] };
     if (isHeic) uploadOptions.format = 'jpg';
     const result = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
