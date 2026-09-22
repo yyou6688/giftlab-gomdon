@@ -126,6 +126,20 @@ function escapeHtml(str){
 
 function fmt(n){ return n.toLocaleString('vi-VN') + 'đ'; }
 
+// MỚI: tự chèn tham số resize/nén vào URL ảnh Cloudinary trước khi hiển thị (dùng chung
+// tài khoản Cloudinary với giftlab-shop) - trang quản trị dùng nhiều ảnh thumbnail nhỏ
+// (28-40px) nên không cần tải bản ảnh gốc siêu to. Ảnh KHÔNG phải từ Cloudinary được giữ
+// nguyên, không đụng vào.
+function cldResize(url, width){
+  if(!url || typeof url !== 'string') return url;
+  const marker = '/upload/';
+  const idx = url.indexOf(marker);
+  if(idx === -1 || !url.includes('res.cloudinary.com')) return url;
+  const before = url.slice(0, idx + marker.length);
+  const after = url.slice(idx + marker.length);
+  return `${before}w_${width},q_auto,f_auto,c_limit/${after}`;
+}
+
 // MỚI: tải cấu hình bật/tắt tự động huỷ đơn chưa thanh toán (gọi 1 lần lúc vào trang)
 async function loadOrderAutomationSettings(){
   try{
@@ -484,12 +498,12 @@ function renderOrders(){
           // ảnh vào biến toàn cục (khoá theo mã đơn) thay vì nhúng thẳng vào chuỗi HTML, để
           // tránh URL ảnh có ký tự đặc biệt làm hỏng thuộc tính onclick.
           const gallery = o.items.map(it => getOrderItemImage(it)).filter(Boolean);
-          orderImageGalleries[o.id] = gallery;
+          orderImageGalleries[o.id] = gallery.map(u => cldResize(u, 1200)); // MỚI: bản to hơn dành riêng cho lúc phóng to xem ảnh
           return o.items.map(it => {
             const img = getOrderItemImage(it);
             const galleryIdx = img ? gallery.indexOf(img) : -1;
             const thumb = img
-              ? `<img src="${escapeHtml(img)}" alt="" class="order-item-thumb" style="cursor:zoom-in;" onclick="openImageZoom(event, orderImageGalleries[${o.id}], ${galleryIdx})">`
+              ? `<img src="${escapeHtml(cldResize(img, 100))}" alt="" class="order-item-thumb" style="cursor:zoom-in;" onclick="openImageZoom(event, orderImageGalleries[${o.id}], ${galleryIdx})">`
               : `<div class="order-item-thumb order-item-thumb-empty">🎁</div>`;
             return `<div class="order-item-row">
               <div style="display:flex; align-items:center; gap:8px; min-width:0;">
@@ -1371,7 +1385,7 @@ function renderCategoryProductPanel(c){
         <button onclick="event.preventDefault(); event.stopPropagation(); moveProduct('${p.id}', '${prevNeighbor ? prevNeighbor.id : ''}')" ${(!prevNeighbor || autoSorted) ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : 'Lên'}" style="padding:1px 5px; line-height:1;">▲</button>
         <button onclick="event.preventDefault(); event.stopPropagation(); moveProduct('${p.id}', '${nextNeighbor ? nextNeighbor.id : ''}')" ${(!nextNeighbor || autoSorted) ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : 'Xuống'}" style="padding:1px 5px; line-height:1;">▼</button>
       </div>
-      ${p.image ? `<img src="${escapeHtml(p.image)}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
+      ${p.image ? `<img src="${escapeHtml(cldResize(p.image, 100))}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
       <span style="flex:1;">${escapeHtml(p.name)}</span>
       <span style="font-size:11px; color:${p.category===c.key ? 'var(--sage-deep)' : 'var(--ink-soft)'}; white-space:nowrap;">${p.category===c.key ? '✓ đang ở đây' : escapeHtml(catLabel(p.category))}</span>
     </label>
@@ -1858,7 +1872,7 @@ function renderProductList(){
           <button onclick="moveProduct('${p.id}', '${prevNeighbor ? prevNeighbor.id : ''}')" ${(!prevNeighbor || arrowsDisabled) ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : 'Lên'}" style="padding:2px 6px; line-height:1;">▲</button>
           <button onclick="moveProduct('${p.id}', '${nextNeighbor ? nextNeighbor.id : ''}')" ${(!nextNeighbor || arrowsDisabled) ? 'disabled' : ''} title="${autoSorted ? 'Danh mục đang tự sắp xếp' : 'Xuống'}" style="padding:2px 6px; line-height:1;">▼</button>
         </div>
-        ${p.image ? `<img src="${escapeHtml(p.image)}" class="pi" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : `<div class="pi">🎁</div>`}
+        ${p.image ? `<img src="${escapeHtml(cldResize(p.image, 100))}" class="pi" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : `<div class="pi">🎁</div>`}
         <div class="pinfo">
           <b>${escapeHtml(p.name)}${p.pinned ? ' · <span style="color:#3C3489; font-weight:600;">📌 Đang ghim đầu</span>' : ''}</b>
           <span>${escapeHtml(catLabel(p.category))} · ${priceLabel} · Tổng tồn: ${p.totalStock}${variants.length > 1 ? ` · ${variants.length} phân loại` : ''}${p.hidden ? ' · <span style="color:#B23A3A; font-weight:600;">🙈 Đang ẩn</span>' : ''}</span>
@@ -1973,7 +1987,7 @@ function renderVariantPanel(p){
   const variants = (p.variants && p.variants.length) ? p.variants : [{ name: null, price: p.priceMin, stock: p.totalStock, image: '', weight: null }];
   const rows = variants.map((v, idx) => `
     <div class="variant-edit-row">
-      <img src="${escapeHtml(v.image || p.image || '')}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
+      <img src="${escapeHtml(cldResize(v.image || p.image || '', 100))}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
       <div class="variant-edit-fields">
         <div class="variant-edit-name">${escapeHtml(v.name || 'Mặc định')}</div>
         <div class="form-row">
@@ -2001,8 +2015,8 @@ function renderVariantPanel(p){
     const url = detailImages[idx] || '';
     return `
       <div class="detail-img-slot">
-        <img src="${escapeHtml(url)}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
-        <input type="text" id="di-url-${p.id}-${idx}" value="${escapeHtml(url)}" placeholder="Ảnh mô tả ${idx+1}" oninput="setDetailImageUrl('${p.id}', ${idx}, this.value)">
+        <img src="${escapeHtml(cldResize(url, 100))}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
+        <input type="text" id="di-url-${p.id}-${idx}" value="${escapeHtml(cldResize(url, 100))}" placeholder="Ảnh mô tả ${idx+1}" oninput="setDetailImageUrl('${p.id}', ${idx}, this.value)">
         <input type="file" accept="image/*" id="di-file-${p.id}-${idx}" onchange="uploadDetailImage('${p.id}', ${idx})">
         <span id="di-status-${p.id}-${idx}" style="font-size:10px; color:var(--ink-soft);"></span>
       </div>
@@ -2018,9 +2032,9 @@ function renderVariantPanel(p){
       <div class="form-field">
         <label>Ảnh đại diện sản phẩm (hiển thị ở trang chủ và danh sách sản phẩm)</label>
         <div style="display:flex; gap:10px; align-items:flex-start; margin-bottom:8px;">
-          <img id="cover-preview-${p.id}" src="${escapeHtml(p.image || '')}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
+          <img id="cover-preview-${p.id}" src="${escapeHtml(cldResize(p.image || '', 100))}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
           <div style="flex:1;">
-            <input type="text" id="cover-image-${p.id}" value="${escapeHtml(p.image || '')}" placeholder="https://..." oninput="setCoverImagePreview('${p.id}', this.value)">
+            <input type="text" id="cover-image-${p.id}" value="${escapeHtml(cldResize(p.image || '', 100))}" placeholder="https://..." oninput="setCoverImagePreview('${p.id}', this.value)">
             <input type="file" accept="image/*" id="cover-file-${p.id}" onchange="uploadCoverImage('${p.id}')" style="margin-top:6px;">
             <span id="cover-upload-status-${p.id}" style="font-size:11px; color:var(--ink-soft); display:block; margin-top:4px;"></span>
           </div>
@@ -2028,7 +2042,7 @@ function renderVariantPanel(p){
         ${variants.some(v => v.image) ? `
           <p style="font-size:12px; color:var(--ink-soft); margin:6px 0 4px;">Hoặc dùng luôn ảnh của 1 phân loại làm ảnh đại diện:</p>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            ${variants.map((v, idx) => v.image ? `<img src="${escapeHtml(v.image)}" class="variant-edit-thumb" style="cursor:pointer;" title="${escapeHtml(v.name || 'Dùng ảnh này')}" onclick="setCoverImageFromVariant('${p.id}', ${idx})">` : '').join('')}
+            ${variants.map((v, idx) => v.image ? `<img src="${escapeHtml(cldResize(v.image, 100))}" class="variant-edit-thumb" style="cursor:pointer;" title="${escapeHtml(v.name || 'Dùng ảnh này')}" onclick="setCoverImageFromVariant('${p.id}', ${idx})">` : '').join('')}
           </div>
         ` : ''}
       </div>
@@ -2620,7 +2634,7 @@ function renderFeaturedSelectedList(){
     if(!p) return '';
     return `
       <div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13px;">
-        ${p.image ? `<img src="${escapeHtml(p.image)}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
+        ${p.image ? `<img src="${escapeHtml(cldResize(p.image, 100))}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
         <span style="flex:1;">${escapeHtml(p.name)}</span>
         <button class="danger" onclick="removeFeaturedProduct('${id}')">Xoá</button>
       </div>
@@ -2637,7 +2651,7 @@ function renderFeaturedSearchList(){
   if(results.length === 0) return `<p style="font-size:13px; color:var(--ink-soft);">Không tìm thấy sản phẩm.</p>`;
   return results.map(p => `
     <div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13px;">
-      ${p.image ? `<img src="${escapeHtml(p.image)}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
+      ${p.image ? `<img src="${escapeHtml(cldResize(p.image, 100))}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
       <span style="flex:1;">${escapeHtml(p.name)}</span>
       <button onclick="addFeaturedProduct('${p.id}')">+ Thêm</button>
     </div>
@@ -2662,12 +2676,12 @@ function removeFeaturedProduct(id){
 function renderHeroSlideRows(){
   return homepageContent.heroSlides.map((s, idx) => `
     <div class="variant-edit-row">
-      <img src="${escapeHtml(s.image || '')}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
+      <img src="${escapeHtml(cldResize(s.image || '', 100))}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
       <div class="variant-edit-fields">
         <div class="variant-edit-name">Ảnh banner ${idx+1}</div>
         <div class="form-field">
           <label>Link ảnh</label>
-          <input type="text" id="hero-img-${idx}" value="${escapeHtml(s.image || '')}" placeholder="https://..." oninput="homepageContent.heroSlides[${idx}].image=this.value">
+          <input type="text" id="hero-img-${idx}" value="${escapeHtml(cldResize(s.image || '', 100))}" placeholder="https://..." oninput="homepageContent.heroSlides[${idx}].image=this.value">
         </div>
         <div class="form-field">
           <label>Hoặc tải ảnh từ máy/điện thoại lên</label>
@@ -2689,12 +2703,12 @@ function renderCollectionRows(){
   }
   return homepageContent.collections.map((c, idx) => `
     <div class="variant-edit-row">
-      <img src="${escapeHtml(c.image || '')}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
+      <img src="${escapeHtml(cldResize(c.image || '', 100))}" class="variant-edit-thumb" onerror="this.style.visibility='hidden'">
       <div class="variant-edit-fields">
         <div class="variant-edit-name">${escapeHtml(c.label)}${c.hidden ? ' · <span style="color:#B23A3A; font-weight:600;">Đang ẩn khỏi trang chủ</span>' : ''}</div>
         <div class="form-field">
           <label>Link ảnh</label>
-          <input type="text" id="col-img-${idx}" value="${escapeHtml(c.image || '')}" placeholder="https://..." oninput="homepageContent.collections[${idx}].image=this.value">
+          <input type="text" id="col-img-${idx}" value="${escapeHtml(cldResize(c.image || '', 100))}" placeholder="https://..." oninput="homepageContent.collections[${idx}].image=this.value">
         </div>
         <div class="form-field">
           <label>Hoặc tải ảnh từ máy/điện thoại lên</label>
@@ -2999,7 +3013,7 @@ function renderPromoProductPicker(promo){
   const rows = matching.map(p => `
     <label style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:13px;">
       <input type="checkbox" ${promoSelectedProductIds.has(p.id) ? 'checked' : ''} onchange="togglePromoSelectProduct('${p.id}', this.checked, '${promo.id}')">
-      ${p.image ? `<img src="${p.image}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
+      ${p.image ? `<img src="${cldResize(p.image, 100)}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : `<span style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;">🎁</span>`}
       <span style="flex:1;">${escapeHtml(p.name)}</span>
       <span style="font-size:11px; color:var(--ink-soft);">${escapeHtml(catLabel(p.category))}</span>
     </label>
@@ -3078,7 +3092,7 @@ function renderPromoItemsList(promo){
     return `
       <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
         <div style="display:flex; align-items:center; gap:8px;">
-          ${p && p.image ? `<img src="${p.image}" style="width:36px;height:36px;border-radius:6px;object-fit:cover;">` : `<span>🎁</span>`}
+          ${p && p.image ? `<img src="${cldResize(p.image, 100)}" style="width:36px;height:36px;border-radius:6px;object-fit:cover;">` : `<span>🎁</span>`}
           <span style="flex:1; font-size:13px; font-weight:600;">${p ? escapeHtml(p.name) : '(Sản phẩm không còn tồn tại)'}</span>
           <button class="danger" onclick="removeItemFromPromo('${promo.id}', ${idx})" style="font-size:11px;">Xoá khỏi CT</button>
         </div>
@@ -3421,7 +3435,7 @@ function renderFlashSaleProductPicker(fs){
       ${matching.map(p => `
         <label style="display:flex; align-items:center; gap:8px; padding:4px 2px; font-size:13px;">
           <input type="checkbox" ${flashSaleSelectedProductIds.has(p.id) ? 'checked' : ''} onchange="toggleFlashSaleSelectProduct('${p.id}', this.checked, '${fs.id}')">
-          ${p.image ? `<img src="${p.image}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;">` : ''}
+          ${p.image ? `<img src="${cldResize(p.image, 100)}" style="width:28px;height:28px;border-radius:5px;object-fit:cover;">` : ''}
           <span>${escapeHtml(p.name)}</span>
         </label>
       `).join('') || '<p style="font-size:12px; color:var(--ink-soft); padding:4px;">Không tìm thấy sản phẩm khớp.</p>'}
@@ -3482,7 +3496,7 @@ function renderFlashSaleItemsList(fs){
     return `
       <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
         <div style="display:flex; align-items:center; gap:8px;">
-          ${p && p.image ? `<img src="${p.image}" style="width:36px;height:36px;border-radius:6px;object-fit:cover;">` : `<span>⚡</span>`}
+          ${p && p.image ? `<img src="${cldResize(p.image, 100)}" style="width:36px;height:36px;border-radius:6px;object-fit:cover;">` : `<span>⚡</span>`}
           <span style="flex:1; font-size:13px; font-weight:600;">${p ? escapeHtml(p.name) : '(Sản phẩm không còn tồn tại)'}</span>
           <button class="danger" onclick="removeItemFromFlashSale('${fs.id}', ${idx})" style="font-size:11px;">Xoá khỏi CT</button>
         </div>
