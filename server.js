@@ -21,16 +21,30 @@ const flashSalesStore = require('./flashSalesStore'); // MỚI: chương trình 
 const orderAutomationStore = require('./orderAutomationStore'); // MỚI: bật/tắt tự động huỷ đơn chưa thanh toán
 const promoUtils = require('./promoUtils'); // MỚI: logic tính giá/giới hạn khuyến mãi + flash sale dùng chung (2 loại cùng cấu trúc)
 const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
+// MỚI: chuyển từ Cloudinary sang Cloudflare R2 (miễn phí, không tính phí băng thông) -
+// R2 dùng chung giao thức với Amazon S3 nên gọi qua gói @aws-sdk/client-s3 tiêu chuẩn.
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+// MỚI: R2 không tự resize ảnh theo link như Cloudinary - dùng sharp để nén/resize
+// ngay lúc upload, chạy thẳng trên server, không qua dịch vụ ngoài nào.
+const sharp = require('sharp');
 // Module tính phí ship (dựa trên cân nặng từng sản phẩm)
 const { calculateShippingFee, loadShippingConfig, saveShippingConfig } = require('./shippingCalculator');
 // MỚI: gửi email Gmail báo đơn mới / đã thanh toán
 const { sendNotifyEmail, sendTrackingEmailToCustomer } = require('./mailer'); // MỚI: sendTrackingEmailToCustomer
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
-  api_key: process.env.CLOUDINARY_API_KEY || '',
-  api_secret: process.env.CLOUDINARY_API_SECRET || '',
+// MỚI: cấu hình Cloudflare R2 - dùng CHUNG bucket với giftlab-shop cũng được (folder
+// riêng "giftlab-shop/" đã phân biệt sẵn), hoặc tạo bucket riêng đều được - 4 biến này
+// khai trong Render (Environment), lấy từ Cloudflare Dashboard.
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
+const R2_BUCKET = process.env.R2_BUCKET_NAME || '';
+const R2_PUBLIC_URL_BASE = process.env.R2_PUBLIC_URL_BASE || ''; // VD: https://pub-xxxxxxxx.r2.dev
+const r2Client = new S3Client({
+  region: 'auto',
+  endpoint: R2_ACCOUNT_ID ? `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+  },
 });
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -208,6 +222,59 @@ function requireAdmin(req, res, next) {
 // ============================================================
 // SẢN PHẨM
 // ============================================================
+
+// MỚI: di chuyển 1 LẦN toàn bộ ảnh sản phẩm đang lưu trên Cloudinary sang Cloudflare R2 -
+// tải từng ảnh cũ về, đẩy lên R2, rồi cập nhật lại đường dẫn ảnh trong Google Sheets. Chỉ
+// chạy đúng 1 lần sau khi đã cấu hình xong 5 biến R2 - chạy xong thì thôi, không cần chạy
+// lại nữa (ảnh nào đã là link R2 sẽ tự bỏ qua nếu lỡ bấm chạy 2 lần).
+app.post('/api/admin/migrate-images-to-r2', requireAdmin, async (req, res) => {
+  if (!R2_ACCOUNT_ID || !R2_BUCKET || !R2_PUBLIC_URL_BASE) {
+    return res.status(500).json({ error: 'Chưa cấu hình R2 trong .env' });
+  }
+  async function migrateUrl(url) {
+    if (!url || !url.includes('res.cloudinary.com')) return { url, changed: false };
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('Tải ảnh cũ thất bại (HTTP ' + resp.status + ')');
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      const ext = ((url.split('?')[0] || '').split('.').pop() || 'jpg').slice(0, 5);
+      const key = `giftlab-shop/migrated-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      await r2Client.send(new PutObjectCommand({
+        Bucket: R2_BUCKET, Key: key, Body: buffer,
+        ContentType: resp.headers.get('content-type') || 'image/jpeg',
+      }));
+      return { url: `${R2_PUBLIC_URL_BASE.replace(/\/$/, '')}/${key}`, changed: true };
+    } catch (err) {
+      return { url, changed: false, error: err.message };
+    }
+  }
+  try {
+    const products = await productsStore.listProducts();
+    let migrated = 0;
+    const failed = [];
+    for (const p of products) {
+      const r = await migrateUrl(p.image);
+      if (r.changed) { p.image = r.url; migrated++; } else if (r.error) failed.push({ product: p.name, error: r.error });
+      if (Array.isArray(p.detailImages)) {
+        for (let i = 0; i < p.detailImages.length; i++) {
+          const r2 = await migrateUrl(p.detailImages[i]);
+          if (r2.changed) { p.detailImages[i] = r2.url; migrated++; } else if (r2.error) failed.push({ product: p.name, error: r2.error });
+        }
+      }
+      if (Array.isArray(p.variants)) {
+        for (const v of p.variants) {
+          const r3 = await migrateUrl(v.image);
+          if (r3.changed) { v.image = r3.url; migrated++; } else if (r3.error) failed.push({ product: p.name, error: r3.error });
+        }
+      }
+    }
+    await productsStore.saveProducts(products);
+    res.json({ success: true, migrated, failedCount: failed.length, failed: failed.slice(0, 20) });
+  } catch (err) {
+    console.error('Lỗi di chuyển ảnh sang R2:', err.message);
+    res.status(500).json({ error: 'Lỗi di chuyển ảnh: ' + err.message });
+  }
+});
 
 app.get('/api/products', async (req, res) => {
   try {
@@ -622,29 +689,43 @@ app.post('/api/admin/products/bulk-delete', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/upload-image', requireAdmin, upload.single('image'), async (req, res) => {
-  if (!process.env.CLOUDINARY_CLOUD_NAME) {
-    return res.status(500).json({ error: 'Chưa cấu hình Cloudinary trong .env' });
+  if (!R2_ACCOUNT_ID || !R2_BUCKET || !R2_PUBLIC_URL_BASE) {
+    return res.status(500).json({ error: 'Chưa cấu hình Cloudflare R2 trong .env (thiếu R2_ACCOUNT_ID/R2_BUCKET_NAME/R2_PUBLIC_URL_BASE)' });
   }
   if (!req.file) {
     return res.status(400).json({ error: 'Chưa chọn file ảnh' });
   }
   try {
-    // MỚI: ảnh HEIC (định dạng riêng của iPhone) không hiện được trên Chrome/Android -
-    // tự chuyển sang JPG ngay lúc tải lên Cloudinary để hiện đúng trên mọi thiết bị
-    const isHeic = /\.(heic|heif)$/i.test(req.file.originalname || '') || (req.file.mimetype || '').includes('heic');
-    // MỚI: giới hạn kích thước tối đa lúc LƯU ảnh (chỉ thu nhỏ nếu ảnh gốc to hơn, không
-    // phóng to ảnh nhỏ) + tự nén chất lượng vừa phải - tránh lưu nguyên ảnh gốc siêu to từ
-    // điện thoại, vừa tốn dung lượng Cloudinary vừa khiến trang tải chậm không cần thiết.
-    const uploadOptions = { folder: 'giftlab-shop', transformation: [{ width: 1600, height: 1600, crop: 'limit', quality: 'auto:good' }] };
-    if (isHeic) uploadOptions.format = 'jpg';
-    const result = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        uploadOptions,
-        (err, result) => err ? reject(err) : resolve(result)
-      );
-      stream.end(req.file.buffer);
-    });
-    res.json({ url: result.secure_url });
+    // MỚI: nén + giới hạn kích thước tối đa 1600px ngay lúc upload (không phóng to ảnh
+    // nhỏ sẵn), tự xoay đúng chiều theo EXIF, và tự chuyển mọi định dạng (kể cả HEIC của
+    // iPhone) sang JPEG để hiện đúng trên mọi thiết bị - thay cho việc Cloudinary tự làm
+    // trước đây. Nếu sharp không đọc được file (hiếm gặp), vẫn upload nguyên bản gốc thay
+    // vì báo lỗi luôn - không để khách/bạn upload thất bại.
+    let buffer = req.file.buffer;
+    let contentType = req.file.mimetype;
+    let ext = 'jpg';
+    try {
+      buffer = await sharp(req.file.buffer)
+        .rotate()
+        .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 82 })
+        .toBuffer();
+      contentType = 'image/jpeg';
+    } catch (resizeErr) {
+      console.error('Lỗi nén ảnh (dùng tạm bản gốc):', resizeErr.message);
+      ext = (req.file.originalname || '').split('.').pop() || 'jpg';
+    }
+
+    const key = `giftlab-shop/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    await r2Client.send(new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+    }));
+
+    const url = `${R2_PUBLIC_URL_BASE.replace(/\/$/, '')}/${key}`;
+    res.json({ url });
   } catch (err) {
     console.error('Lỗi tải ảnh lên Cloudinary:', err.message);
     res.status(500).json({ error: 'Tải ảnh lên thất bại, thử lại giúp mình' });
