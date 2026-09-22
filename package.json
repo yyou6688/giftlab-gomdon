@@ -13,6 +13,7 @@
     "dotenv": "^16.4.5",
     "googleapis": "^140.0.0",
     "multer": "^1.4.5-lts.1",
-    "cloudinary": "^2.5.0"
+    "@aws-sdk/client-s3": "^3.700.0",
+    "sharp": "^0.33.5"
   }
 }
