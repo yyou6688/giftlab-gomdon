@@ -2,6 +2,15 @@
 // shop.js - phía khách hàng (Gift Lab)
 // ============================================================
 
+// MỚI: Cloudflare Turnstile - xác minh chống bot trước khi cho đặt hàng. Site Key là mã
+// CÔNG KHAI (không phải bí mật), an toàn khi để lộ trong code frontend như thế này.
+// !!! CẦN THAY BẰNG SITE KEY THẬT của widget Turnstile riêng cho domain giftlab-gomdon
+// (tạo trên Cloudflare Dashboard > Turnstile > Add widget, domain khai đúng
+// giftlab-gomdon.onrender.com) - widget của giftlabbyu.shop KHÔNG dùng chung được.
+const TURNSTILE_SITE_KEY = '0x4AAAAAAFAgieg1lODBYyUU';
+let turnstileToken = '';        // MỚI: token khách vừa xác minh xong, gửi kèm lúc đặt hàng
+let turnstileWidgetId = null;   // MỚI: id widget đã render, dùng để reset lại sau khi đặt hàng xong/lỗi
+
 let products = [];
 let shippingConfig = null;
 let homepageContent = null; // MỚI: banner + bộ sưu tập trang chủ
@@ -1369,11 +1378,14 @@ function renderLookupResult(){
 async function cancelMyOrder(){
   const o = lookupOrderResult;
   if(!o) return;
+  // MỚI: bắt nhập mã xác nhận đã hiện lúc đặt hàng thành công
+  const verifyCode = prompt('Nhập mã xác nhận đơn hàng (đã hiện lúc đặt hàng thành công) để huỷ đơn:');
+  if(verifyCode === null) return;
   if(!confirm(`Huỷ đơn hàng #${o.id}? Không thể hoàn tác.`)) return;
   try{
     const res = await fetch('/api/orders/cancel', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId: o.id, phone: lookupPhone })
+      body: JSON.stringify({ orderId: o.id, phone: lookupPhone, verifyCode: verifyCode.trim() })
     });
     const data = await res.json();
     if(!res.ok){ alert(data.error || 'Không huỷ được đơn hàng.'); return; }
@@ -1424,6 +1436,7 @@ function renderEditAddressForm(){
       </div>
     </div>
     <div class="form-field"><label>Địa chỉ chi tiết</label><textarea id="ea-address-detail" placeholder="Số nhà, tên đường...">${o.addressDetail || ''}</textarea></div>
+    <div class="form-field"><label>Mã xác nhận đơn hàng</label><input type="text" id="ea-verify-code" placeholder="Mã đã hiện lúc đặt hàng thành công" style="text-transform:uppercase;"></div>
     <button class="checkout-btn" id="saveAddressBtn" onclick="submitEditAddress()">Lưu thông tin mới</button>
     <p id="editAddressMsg" style="font-size:13px; margin-top:10px; color:#B23A3A;"></p>
   `;
@@ -1436,6 +1449,7 @@ async function submitEditAddress(){
   const province = document.getElementById('cf-province').value;
   const ward = document.getElementById('cf-ward').value;
   const addressDetail = document.getElementById('ea-address-detail').value.trim();
+  const verifyCode = document.getElementById('ea-verify-code').value.trim(); // MỚI
   const msgEl = document.getElementById('editAddressMsg');
   if(!customerName || !newPhone || !province || !ward || !addressDetail){
     msgEl.textContent = 'Vui lòng nhập đủ Tên người nhận, SĐT, chọn Tỉnh/Thành, Xã/Phường và nhập địa chỉ chi tiết.';
@@ -1446,7 +1460,7 @@ async function submitEditAddress(){
   try{
     const res = await fetch('/api/orders/update-address', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId: o.id, phone: lookupPhone, customerName, newPhone, province, ward, addressDetail })
+      body: JSON.stringify({ orderId: o.id, phone: lookupPhone, customerName, newPhone, province, ward, addressDetail, verifyCode })
     });
     const data = await res.json();
     if(!res.ok){
@@ -1573,6 +1587,13 @@ function renderDrawer(){
       </div>
       ${orderAutomationEnabled ? `<div class="checkout-notice">⏰ Đơn sẽ tự động huỷ nếu chưa thanh toán trong vòng <b>1 giờ</b> kể từ lúc đặt, mong quý khách thông cảm cho sự bất tiện này. Chúc quý khách lướt ngắm vui, hốt được nhiều deal hời!!</div>` : ''}
     ` : '';
+    // MỚI: mã xác nhận đơn hàng - khách tự đặt lúc điền form, nhắc lại 1 lần nữa ở đây
+    const verifyCodeBlock = (lastOrder && lastOrder.verifyCode) ? `
+      <div class="qr-box" style="text-align:left;">
+        <p style="font-weight:700; margin-bottom:6px;">🔑 Mã xác nhận đơn hàng: <span style="font-size:20px; letter-spacing:2px; color:var(--rose-deep);">${lastOrder.verifyCode}</span></p>
+        <p style="font-size:12.5px; color:var(--ink-soft); line-height:1.5;">Đây là mã bạn vừa đặt — nhớ lưu lại (chụp màn hình/ghi chú), cần dùng khi bạn muốn tự <b>huỷ đơn</b> hoặc <b>đổi thông tin nhận hàng</b> ở mục "Tra cứu đơn hàng". Nếu quên, hãy nhắn shop để được hỗ trợ.</p>
+      </div>
+    ` : '';
     list.innerHTML = `
       <div class="success-box">
         <div class="emoji">🎉</div>
@@ -1580,6 +1601,7 @@ function renderDrawer(){
         <p>Deal sẽ được giữ trong 1 giờ, mời quý khách thanh toán để đơn hàng được chốt ạ. Nếu cần hỗ trợ, hãy liên hệ ngay với U nhen ^^</p>
         <p style="font-size:13px; color:var(--ink-soft); margin-top:6px;">Chưa kịp chuyển khoản ngay? Không sao — vào mục "Tra cứu đơn hàng" ở đầu trang bất cứ lúc nào để xem lại mã QR này.</p>
       </div>
+      ${verifyCodeBlock}
       ${shippingSummary}
       ${qrBlock}
     `;
@@ -1604,7 +1626,14 @@ function renderDrawer(){
       <div class="back-link" onclick="drawerView='cart'; renderDrawer();">← Quay lại giỏ hàng</div>
       ${pendingSaleNotice}
       <div class="form-field"><label>Họ tên</label><input type="text" id="cf-name" placeholder="Nguyễn Văn A" value="${escapeHtml(checkoutForm.customerName)}" oninput="checkoutForm.customerName=this.value"></div>
-      <div class="form-field"><label>Số điện thoại</label><input type="tel" id="cf-phone" placeholder="09xxxxxxxx" value="${escapeHtml(checkoutForm.phone)}" oninput="checkoutForm.phone=this.value"></div>
+      <div class="form-field"><label>Số điện thoại</label><input type="tel" id="cf-phone" placeholder="09xxxxxxxx" value="${escapeHtml(checkoutForm.phone)}" oninput="checkoutForm.phone=this.value; suggestVerifyCodeFromPhone(this.value);"></div>
+      <!-- MỚI: mã xác nhận đơn hàng - khách tự đặt (web gợi ý sẵn 4 số cuối SĐT, gõ đè để đổi qua mã khác dễ nhớ hơn nếu muốn).
+           Dùng để xác minh khi khách tự huỷ đơn/đổi thông tin sau này, tránh chỉ cần biết SĐT là làm được. -->
+      <div class="form-field">
+        <label>Mã xác nhận đơn hàng</label>
+        <input type="text" id="cf-verify-code" placeholder="VD: 4 số cuối SĐT" maxlength="20" style="text-transform:uppercase;" oninput="this.dataset.touched='1';">
+        <p style="font-size:12px; color:var(--ink-soft); margin-top:4px;">Web tự điền sẵn 4 số cuối SĐT — bạn có thể gõ đè qua mã khác dễ nhớ hơn. <b>Nhớ lưu lại mã này</b>, cần dùng khi muốn tự huỷ đơn hoặc đổi thông tin nhận hàng sau này.</p>
+      </div>
       <div class="form-field"><label>Gmail (không bắt buộc - để nhận thông báo mã vận đơn)</label><input type="email" id="cf-email" placeholder="ban@gmail.com" value="${escapeHtml(checkoutForm.customerEmail || '')}" oninput="checkoutForm.customerEmail=this.value"></div>
       <div class="form-field searchable-select">
         <label>Tỉnh/Thành phố</label>
@@ -1641,8 +1670,10 @@ function renderDrawer(){
       <div class="foot-row"><span>Tổng giá trị đơn</span><b id="cf-grand-total">${fmt(total)}</b></div>
       <div class="foot-row" style="font-weight:700;"><span>${wantCodShipping ? 'Cần chuyển khoản (chưa gồm ship)' : 'Cần chuyển khoản'}</span><b id="cf-due-amount">${fmt(total)}</b></div>
       ${orderAutomationEnabled ? `<div class="checkout-notice">⏰ Đơn sẽ tự động huỷ nếu chưa thanh toán trong vòng <b>1 giờ</b> kể từ lúc đặt.</div>` : ''}
+      <div id="cf-turnstile-box" style="margin:12px 0; display:flex; justify-content:center; min-height:20px;"><span style="font-size:12px; color:var(--ink-soft);">Đang tải xác minh bảo mật...</span></div>
       <button class="checkout-btn" id="submitOrderBtn" onclick="submitOrder()">Gửi đơn hàng</button>
     `;
+    renderTurnstileWidget(); // MỚI: vẽ widget xác minh chống bot - phải gọi SAU khi div #cf-turnstile-box đã có trong DOM
     const previewItems = checkoutEntries.map(e => ({ id: e.p.id, variantIndex: e.variantIndex, qty: e.qty }));
     loadShippingPreview(previewItems);
     return;
@@ -1843,10 +1874,68 @@ async function loadShippingPreview(items){
   }
 }
 
+// MỚI: tự điền gợi ý 4 số cuối SĐT vào ô "Mã xác nhận đơn hàng" MỖI KHI khách gõ số điện
+// thoại - nhưng CHỈ khi khách chưa tự gõ tay vào ô mã (cờ data-touched) để không đè mất
+// mã khách đã tự đổi qua thứ khác.
+function suggestVerifyCodeFromPhone(phoneVal){
+  const vcInput = document.getElementById('cf-verify-code');
+  if(!vcInput || vcInput.dataset.touched === '1') return;
+  const digits = String(phoneVal || '').replace(/\D/g, '');
+  vcInput.value = digits.slice(-4);
+}
+
+// MỚI: vẽ widget Turnstile vào khung #cf-turnstile-box - dùng cách "tự vẽ" (explicit render)
+// thay vì để Cloudflare tự quét trang, vì khung này được chèn vào SAU khi trang đã tải xong.
+// Tự động THỬ LẠI mỗi 300ms, tối đa ~6 giây nếu script api.js chưa tải xong kịp. Nếu vẫn
+// thất bại sau cùng, hiện rõ thông báo lỗi + nút thử lại tay.
+function renderTurnstileWidget(retryCount){
+  retryCount = retryCount || 0;
+  const box = document.getElementById('cf-turnstile-box');
+  if(!box) return;
+  if(typeof turnstile === 'undefined'){
+    if(retryCount < 20){
+      setTimeout(() => renderTurnstileWidget(retryCount + 1), 300);
+    } else {
+      console.error('Turnstile: không tải được script api.js sau nhiều lần thử (có thể bị trình chặn quảng cáo/tracker chặn).');
+      showTurnstileError(box);
+    }
+    return;
+  }
+  turnstileToken = '';
+  box.innerHTML = ''; // MỚI: xoá dòng chữ "Đang tải..." trước khi vẽ widget
+  try{
+    turnstileWidgetId = turnstile.render(box, {
+      sitekey: TURNSTILE_SITE_KEY,
+      callback: (token) => { turnstileToken = token; },
+      'expired-callback': () => { turnstileToken = ''; },
+      'error-callback': () => { turnstileToken = ''; console.error('Turnstile: xác minh lỗi (kiểm tra lại domain đã khai trong widget).'); showTurnstileError(box); }
+    });
+  } catch(e){
+    console.error('Turnstile: lỗi khi vẽ widget -', e.message);
+    showTurnstileError(box);
+  }
+}
+function showTurnstileError(box){
+  box.innerHTML = `
+    <div style="text-align:center; font-size:12px; color:#B23A3A;">
+      Không tải được bước xác minh bảo mật - có thể do trình chặn quảng cáo/tracker trên trình duyệt.
+      Thử tắt tạm trình chặn đó rồi bấm nút bên dưới, hoặc liên hệ shop nếu vẫn không được.
+      <br><button type="button" onclick="renderTurnstileWidget(0)" style="margin-top:6px; font-size:12px; padding:5px 12px;">Thử lại</button>
+    </div>
+  `;
+}
+function resetTurnstileWidget(){
+  turnstileToken = '';
+  if(turnstileWidgetId !== null && typeof turnstile !== 'undefined'){
+    try{ turnstile.reset(turnstileWidgetId); } catch(e){}
+  }
+}
+
 // ---------- Gửi đơn hàng lên server ----------
 async function submitOrder(){
   const customerName = document.getElementById('cf-name').value.trim();
   const phone = document.getElementById('cf-phone').value.trim();
+  const verifyCode = document.getElementById('cf-verify-code').value.trim(); // MỚI
   const customerEmail = document.getElementById('cf-email').value.trim(); // MỚI: nhận thông báo mã vận đơn
   const province = document.getElementById('cf-province').value; // MỚI
   const ward = document.getElementById('cf-ward').value;         // MỚI
@@ -1861,6 +1950,16 @@ async function submitOrder(){
     alert('Email chưa đúng định dạng, kiểm tra lại giúp mình.');
     return;
   }
+  // MỚI: mã xác nhận đơn hàng - bắt buộc có, tối thiểu 4 ký tự (server sẽ kiểm tra lại lần nữa)
+  if(!verifyCode || verifyCode.length < 4){
+    alert('Vui lòng nhập mã xác nhận đơn hàng (tối thiểu 4 ký tự) - dùng khi bạn muốn tự huỷ đơn/đổi thông tin sau này.');
+    return;
+  }
+  // MỚI: xác minh chống bot - đa số trường hợp chạy ngầm, khách gần như không thấy gì
+  if(!turnstileToken){
+    alert('Đang xác minh bảo mật, vui lòng đợi vài giây rồi bấm "Gửi đơn hàng" lại nhé.');
+    return;
+  }
 
   // MỚI: chỉ gửi đúng những sản phẩm đang được tick chọn, không phải cả giỏ hàng
   const checkoutEntries = getCheckoutEntries();
@@ -1873,15 +1972,17 @@ async function submitOrder(){
   try{
     const res = await fetch('/api/orders', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customerName, phone, customerEmail, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds: Array.from(selectedAddOnIds), codShipping: wantCodShipping }) // MỚI: customerEmail, codShipping
+      body: JSON.stringify({ customerName, phone, customerEmail, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds: Array.from(selectedAddOnIds), codShipping: wantCodShipping, verifyCode, turnstileToken }) // MỚI: customerEmail, codShipping, verifyCode, turnstileToken
     });
     if(!res.ok){
       const err = await res.json();
       alert(err.error || 'Có lỗi xảy ra, thử lại nhé.');
       btn.disabled = false; btn.textContent = 'Gửi đơn hàng';
+      resetTurnstileWidget(); // MỚI
       return;
     }
     lastOrder = await res.json();
+    resetTurnstileWidget(); // MỚI: token vừa dùng xong, reset để lần đặt tiếp theo có token mới
     savePendingOrderReminder(lastOrder); // MỚI: lưu lại để nút nhắc nổi hiện ra nếu khách rời trang mà chưa thanh toán
     // MỚI: chỉ xoá khỏi giỏ đúng những sản phẩm vừa đặt - sản phẩm chưa tick chọn vẫn
     // giữ nguyên trong giỏ để khách đặt tiếp ở lần sau
@@ -1900,6 +2001,7 @@ async function submitOrder(){
   } catch(e){
     alert('Không kết nối được tới server. Kiểm tra lại kết nối mạng.');
     btn.disabled = false; btn.textContent = 'Gửi đơn hàng';
+    resetTurnstileWidget(); // MỚI
   }
 }
 
