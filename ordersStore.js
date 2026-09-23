@@ -49,7 +49,7 @@ async function getSheetsClient() {
 
 // MỚI: mở rộng từ A:AD (30 cột) sang A:AE (31 cột) để chứa Source
 // (nguồn tạo đơn: "website" = khách tự đặt trên web, "tach-don" = đẩy từ công cụ tách đơn Messenger)
-const SHEET_RANGE = 'Orders!A:AE';
+const SHEET_RANGE = 'Orders!A:AF';
 
 function rowToOrder(row) {
   return {
@@ -84,6 +84,7 @@ function rowToOrder(row) {
     mergeShippingCod: row[28] === 'TRUE' || row[28] === true, // MỚI: nhóm gộp chọn trả ship khi nhận hàng
     customerEmail: row[29] || '', // MỚI: Gmail khách để báo mã vận đơn
     source: row[30] || 'website', // MỚI: "website" (khách tự đặt) hoặc "tach-don" (đẩy từ công cụ tách đơn)
+    verifyCode: row[31] || '', // MỚI: mã xác nhận đơn - khách tự đặt, đơn cũ trước khi có tính năng sẽ rỗng
   };
 }
 function orderToRow(o) {
@@ -113,7 +114,8 @@ function orderToRow(o) {
     o.codShipping ? 'TRUE' : 'FALSE',
     o.mergeShippingCod ? 'TRUE' : 'FALSE',
     o.customerEmail || '', // MỚI
-    o.source || 'website' // MỚI
+    o.source || 'website', // MỚI
+    o.verifyCode || '' // MỚI: mã xác nhận đơn - khách tự đặt
   ];
 }
 
@@ -168,7 +170,7 @@ async function sheetAppendOrder(order) {
   const nextRowNumber = rows.length + 1; // dòng 1 là tiêu đề, nên dòng trống tiếp theo = tổng số dòng hiện có + 1
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Orders!A${nextRowNumber}:AE${nextRowNumber}`,
+    range: `Orders!A${nextRowNumber}:AF${nextRowNumber}`,
     valueInputOption: 'RAW',
     requestBody: { values: [orderToRow(order)] }
   });
@@ -184,7 +186,7 @@ async function sheetUpdateOrder(id, patch) {
   const sheetRowNumber = rowIndex + 1; // Sheets đánh số dòng bắt đầu từ 1
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Orders!A${sheetRowNumber}:AE${sheetRowNumber}`,
+    range: `Orders!A${sheetRowNumber}:AF${sheetRowNumber}`,
     valueInputOption: 'RAW',
     requestBody: { values: [orderToRow(updated)] }
   });
@@ -201,7 +203,7 @@ async function sheetDeleteOrder(id) {
   const sheetRowNumber = rowIndex + 1;
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SHEET_ID,
-    range: `Orders!A${sheetRowNumber}:AE${sheetRowNumber}`,
+    range: `Orders!A${sheetRowNumber}:AF${sheetRowNumber}`,
   });
   return true;
 }
