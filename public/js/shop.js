@@ -7,7 +7,7 @@
 // !!! CẦN THAY BẰNG SITE KEY THẬT của widget Turnstile riêng cho domain giftlab-gomdon
 // (tạo trên Cloudflare Dashboard > Turnstile > Add widget, domain khai đúng
 // giftlab-gomdon.onrender.com) - widget của giftlabbyu.shop KHÔNG dùng chung được.
-const TURNSTILE_SITE_KEY = '0x4AAAAAAFAgieg1lODBYyUU';
+const TURNSTILE_SITE_KEY = '0x4AAAAAAFAgieg1l0DBYyUU';
 let turnstileToken = '';        // MỚI: token khách vừa xác minh xong, gửi kèm lúc đặt hàng
 let turnstileWidgetId = null;   // MỚI: id widget đã render, dùng để reset lại sau khi đặt hàng xong/lỗi
 
