@@ -31,6 +31,45 @@ const sharp = require('sharp');
 const { calculateShippingFee, loadShippingConfig, saveShippingConfig } = require('./shippingCalculator');
 // MỚI: gửi email Gmail báo đơn mới / đã thanh toán
 const { sendNotifyEmail, sendTrackingEmailToCustomer } = require('./mailer'); // MỚI: sendTrackingEmailToCustomer
+// MỚI: hàng đợi khoá - chống 2 request ghi đơn hàng/tồn kho cùng lúc đè lên nhau (race condition)
+const { withLock } = require('./lockQueue');
+const ORDER_LOCK = 'orders-and-stock';
+// MỚI: giới hạn tần suất gọi API - chặn script dò SĐT/mã xác nhận hàng loạt
+const { rateLimit } = require('./rateLimiter');
+// MỚI: "mã xác nhận đơn hàng" do khách tự đặt lúc điền form - dùng khi khách muốn tự
+// huỷ đơn/đổi địa chỉ về sau (tránh chỉ cần biết SĐT là làm được)
+const VERIFY_CODE_PATTERN = /^[\p{L}\p{N}]{4,20}$/u;
+function normalizeVerifyCode(input) { return String(input || '').trim().toUpperCase(); }
+function stripVerifyCode(order) {
+  if (!order) return order;
+  const { verifyCode, ...rest } = order;
+  return rest;
+}
+// MỚI: Cloudflare Turnstile - chặn bot spam đơn hàng ảo
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '';
+function verifyTurnstileToken(token, remoteIp) {
+  return new Promise((resolve) => {
+    if (!TURNSTILE_SECRET_KEY) return resolve(true);
+    if (!token) return resolve(false);
+    const https = require('https');
+    const payload = new URLSearchParams({ secret: TURNSTILE_SECRET_KEY, response: token, ...(remoteIp ? { remoteip: remoteIp } : {}) }).toString();
+    const req = https.request({
+      hostname: 'challenges.cloudflare.com',
+      path: '/turnstile/v0/siteverify',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(payload) },
+      timeout: 10000
+    }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => { try { resolve(Boolean(JSON.parse(body).success)); } catch (e) { resolve(false); } });
+    });
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+    req.write(payload);
+    req.end();
+  });
+}
 
 // MỚI: cấu hình Cloudflare R2 - dùng CHUNG bucket với giftlab-shop cũng được (folder
 // riêng "giftlab-shop/" đã phân biệt sẵn), hoặc tạo bucket riêng đều được - 4 biến này
@@ -1089,8 +1128,8 @@ function computeDueAmount(order) {
   return order.grandTotal || order.total || 0;
 }
 
-app.post('/api/orders', async (req, res) => {
-  const { customerName, phone, customerEmail, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds, codShipping } = req.body; // MỚI: customerEmail, codShipping
+app.post('/api/orders', rateLimit('create-order', 8, 10 * 60 * 1000), async (req, res) => {
+  const { customerName, phone, customerEmail, province, ward, addressDetail, note, items, wantGiftWrap, selectedAddOnIds, codShipping, verifyCode, turnstileToken } = req.body; // MỚI: customerEmail, codShipping, verifyCode, turnstileToken
 
   // MỚI: bắt buộc chọn Tỉnh/Thành + Xã/Phường + nhập địa chỉ chi tiết (thay cho 1 ô địa chỉ gộp trước đây)
   // Gmail giờ KHÔNG bắt buộc - không điền thì chỉ đơn giản là không gửi được email tự động báo mã vận đơn
@@ -1103,45 +1142,54 @@ app.post('/api/orders', async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Giỏ hàng trống' });
   }
-
-  const pricing = await buildOrderPricing(items, wantGiftWrap, selectedAddOnIds);
-  if (pricing.orderItems.length === 0) {
-    return res.status(400).json({ error: 'Không có sản phẩm hợp lệ trong giỏ hàng' });
+  // MỚI: chặn bot spam đơn ảo - xác minh Turnstile TRƯỚC MỌI THỨ khác
+  const clientIp = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
+  const humanVerified = await verifyTurnstileToken(turnstileToken, clientIp);
+  if (!humanVerified) {
+    return res.status(400).json({ error: 'Xác minh bảo mật chưa hoàn tất hoặc đã hết hạn. Vui lòng tải lại trang và thử đặt hàng lại giúp mình nhé.' });
+  }
+  // MỚI: mã xác nhận đơn hàng do khách tự đặt - bắt buộc có, dùng khi khách muốn tự
+  // huỷ đơn/đổi địa chỉ về sau
+  const normalizedVerifyCode = normalizeVerifyCode(verifyCode);
+  if (!VERIFY_CODE_PATTERN.test(normalizedVerifyCode)) {
+    return res.status(400).json({ error: 'Mã xác nhận đơn hàng cần 4-20 ký tự chữ/số, không chứa khoảng trắng hoặc ký tự đặc biệt.' });
   }
 
-  // MỚI: chặn đặt hàng nếu có SKU không đủ tồn kho - báo rõ tên sản phẩm/phân loại và
-  // số lượng còn lại để khách tự điều chỉnh giỏ hàng
-  if (pricing.insufficientStock.length > 0) {
-    const detail = pricing.insufficientStock
-      .map(i => `${i.name}${i.variantName ? ' - ' + i.variantName : ''} (còn ${i.available}, bạn đặt ${i.requested})`)
-      .join('; ');
-    return res.status(400).json({ error: `Không đủ hàng trong kho: ${detail}. Vui lòng giảm số lượng hoặc bỏ sản phẩm này khỏi giỏ hàng.` });
-  }
+  const result = await withLock(ORDER_LOCK, async () => {
+    const pricing = await buildOrderPricing(items, wantGiftWrap, selectedAddOnIds);
+    if (pricing.insufficientStock.length > 0) {
+      const detail = pricing.insufficientStock
+        .map(i => `${i.name}${i.variantName ? ' - ' + i.variantName : ''}`)
+        .join(', ');
+      return { error: 400, body: { error: `${detail} đang hết hàng, mời cậu ngó thử các sản phẩm khác hoặc liên hệ U để được hỗ trợ liền nha` } };
+    }
+    if (pricing.orderItems.length === 0) {
+      return { error: 400, body: { error: 'Không có sản phẩm hợp lệ trong giỏ hàng' } };
+    }
 
-  // MỚI: chặn không cho đặt vượt giới hạn số lượng/1 SĐT của các sản phẩm đang khuyến mãi
-  const limitedItems = pricing.orderItems.filter(i => i.promoId && i.promoLimit != null);
-  if (limitedItems.length > 0) {
-    const pastOrders = await ordersStore.listOrders();
-    const normalizedPhone = String(phone).replace(/\s|-/g, '');
-    for (const li of limitedItems) {
-      const alreadyBought = pastOrders
-        .filter(o => o.status !== 'huy' && String(o.phone).replace(/\s|-/g, '') === normalizedPhone)
-        .reduce((sum, o) => sum + (o.items || [])
-          .filter(it => it.id === li.id && it.promoId === li.promoId && (it.variantIndex === li.variantIndex))
-          .reduce((s, it) => s + (it.qty || 0), 0), 0);
-      if (alreadyBought + li.qty > li.promoLimit) {
-        const remaining = Math.max(0, li.promoLimit - alreadyBought);
-        return res.status(400).json({
-          error: `"${li.name}"${li.variantName ? ' - ' + li.variantName : ''} đang giới hạn tối đa ${li.promoLimit} sản phẩm/số điện thoại trong chương trình khuyến mãi. Số điện thoại này chỉ còn được mua thêm ${remaining} sản phẩm.`
-        });
+    // MỚI: chặn không cho đặt vượt giới hạn số lượng/1 SĐT của các sản phẩm đang khuyến mãi
+    const limitedItems = pricing.orderItems.filter(i => i.promoId && i.promoLimit != null);
+    if (limitedItems.length > 0) {
+      const pastOrders = await ordersStore.listOrders();
+      const normalizedPhone = String(phone).replace(/\s|-/g, '');
+      for (const li of limitedItems) {
+        const alreadyBought = pastOrders
+          .filter(o => o.status !== 'huy' && String(o.phone).replace(/\s|-/g, '') === normalizedPhone)
+          .reduce((sum, o) => sum + (o.items || [])
+            .filter(it => it.id === li.id && it.promoId === li.promoId && (it.variantIndex === li.variantIndex))
+            .reduce((s, it) => s + (it.qty || 0), 0), 0);
+        if (alreadyBought + li.qty > li.promoLimit) {
+          const remaining = Math.max(0, li.promoLimit - alreadyBought);
+          return {
+            error: 400,
+            body: { error: `"${li.name}"${li.variantName ? ' - ' + li.variantName : ''} đang giới hạn tối đa ${li.promoLimit} sản phẩm/số điện thoại trong chương trình khuyến mãi. Số điện thoại này chỉ còn được mua thêm ${remaining} sản phẩm.` }
+          };
+        }
       }
     }
-  }
 
-  // MỚI: vẫn giữ 1 chuỗi địa chỉ gộp để hiển thị gọn trong trang quản trị / tra cứu đơn
-  const address = `${addressDetail}, ${ward}, ${province}`;
-
-  try {
+    // MỚI: vẫn giữ 1 chuỗi địa chỉ gộp để hiển thị gọn trong trang quản trị / tra cứu đơn
+    const address = `${addressDetail}, ${ward}, ${province}`;
     const newOrder = {
       id: await ordersStore.nextOrderId(),
       customerName,
@@ -1166,10 +1214,19 @@ app.post('/api/orders', async (req, res) => {
       paid: false,
       codShipping: Boolean(codShipping && pricing.shippingFee > 0), // MỚI: chỉ có ý nghĩa khi thực sự có phí ship
       trackingCode: '',
+      verifyCode: normalizedVerifyCode, // MỚI: mã xác nhận do khách tự đặt
       createdAt: new Date().toISOString()
     };
     await ordersStore.appendOrder(newOrder);
     await adjustStock(pricing.orderItems, -1); // MỚI: trừ kho ngay khi đặt đơn, kể cả chưa thanh toán
+    return { newOrder, pricing, address };
+  });
+
+  if (result.error) {
+    return res.status(result.error).json(result.body);
+  }
+  try {
+    const { newOrder, pricing, address } = result;
     // MỚI: nội dung CK để trống, ngân hàng tự sinh khi khách quét - chỉ cần đúng số tiền
     // Số tiền QR: nếu chọn trả ship khi nhận hàng thì KHÔNG gồm phí ship
     const dueAmount = computeDueAmount(newOrder);
@@ -1184,7 +1241,7 @@ app.post('/api/orders', async (req, res) => {
       `Sản phẩm:\n${pricing.orderItems.map(i => `- ${i.name}${i.variantName ? ' (' + i.variantName + ')' : ''} x${i.qty}`).join('\n')}`
     ).catch(() => {});
 
-    res.status(201).json({ ...newOrder, qrUrl, dueAmount });
+    res.status(201).json({ ...stripVerifyCode(newOrder), verifyCode: newOrder.verifyCode, qrUrl, dueAmount });
   } catch (err) {
     console.error('Lỗi lưu đơn hàng:', err.message);
     res.status(500).json({ error: 'Không lưu được đơn hàng, thử lại giúp mình' });
@@ -1275,7 +1332,7 @@ app.put('/api/orders/import/:id', requireAdmin, async (req, res) => {
 
 // MỚI: khách tìm các đơn hàng của mình chỉ bằng số điện thoại (không cần nhớ mã đơn)
 // Trả về danh sách rút gọn để khách chọn đúng đơn cần xem
-app.post('/api/orders/find-by-phone', async (req, res) => {
+app.post('/api/orders/find-by-phone', rateLimit('order-lookup', 20, 10 * 60 * 1000), async (req, res) => {
   const { phone } = req.body;
   if (!phone) {
     return res.status(400).json({ error: 'Nhập số điện thoại' });
@@ -1309,7 +1366,7 @@ app.post('/api/orders/find-by-phone', async (req, res) => {
 
 // Khách tự tra cứu 1 đơn hàng cụ thể bằng mã đơn + số điện thoại
 // MỚI: kèm theo mã QR nếu đơn đó CHƯA thanh toán, để khách chuyển khoản lại nếu cần
-app.post('/api/orders/lookup', async (req, res) => {
+app.post('/api/orders/lookup', rateLimit('order-lookup', 20, 10 * 60 * 1000), async (req, res) => {
   const { orderId, phone } = req.body;
   if (!orderId || !phone) {
     return res.status(400).json({ error: 'Nhập mã đơn hàng và số điện thoại' });
@@ -1328,7 +1385,8 @@ app.post('/api/orders/lookup', async (req, res) => {
     const qrUrl = !order.paid
       ? buildQrUrl(computeDueAmount(order))
       : null;
-    res.json({ ...order, qrUrl, dueAmount: computeDueAmount(order) });
+    // MỚI: KHÔNG trả verifyCode ra ở API tra cứu - mã này chỉ được lộ đúng 1 lần lúc tạo đơn
+    res.json({ ...stripVerifyCode(order), qrUrl, dueAmount: computeDueAmount(order) });
   } catch (err) {
     console.error('Lỗi tra cứu đơn hàng:', err.message);
     res.status(500).json({ error: 'Không tra cứu được đơn hàng' });
@@ -1386,7 +1444,7 @@ async function computeMergedShipping(selected) {
 }
 
 // Khách xem thử số tiền sẽ tiết kiệm được TRƯỚC khi quyết định gộp thật
-app.post('/api/orders/merge-quote', async (req, res) => {
+app.post('/api/orders/merge-quote', rateLimit('order-lookup', 20, 10 * 60 * 1000), async (req, res) => {
   const { orderIds, phone, codShipping } = req.body; // MỚI: codShipping
   if (!Array.isArray(orderIds) || orderIds.length < 2 || !phone) {
     return res.status(400).json({ error: 'Cần chọn ít nhất 2 đơn và nhập số điện thoại' });
@@ -1420,7 +1478,7 @@ app.post('/api/orders/merge-quote', async (req, res) => {
 // Khách bấm xác nhận gộp thật - lưu nhóm gộp vào các đơn, phí ship riêng từng
 // đơn về 0, phí ship gộp lưu chung để thanh toán qua 1 mã QR riêng (hoặc thu khi
 // giao hàng nếu chọn codShipping)
-app.post('/api/orders/merge-confirm', async (req, res) => {
+app.post('/api/orders/merge-confirm', rateLimit('order-lookup', 20, 10 * 60 * 1000), async (req, res) => {
   const { orderIds, phone, codShipping } = req.body; // MỚI: codShipping
   if (!Array.isArray(orderIds) || orderIds.length < 2 || !phone) {
     return res.status(400).json({ error: 'Cần chọn ít nhất 2 đơn và nhập số điện thoại' });
@@ -1488,9 +1546,11 @@ async function matchAndConfirmPayment(amount, content) {
       const phoneDigits = String(o.phone).replace(/\D/g, '');
       if (phoneDigits && norm.includes(phoneDigits)) {
         const groupOrders = orders.filter(x => x.mergeGroupId === o.mergeGroupId);
-        for (const go of groupOrders) {
-          await ordersStore.updateOrder(go.id, { mergeShippingPaid: true });
-        }
+        await withLock(ORDER_LOCK, async () => {
+          for (const go of groupOrders) {
+            await ordersStore.updateOrder(go.id, { mergeShippingPaid: true });
+          }
+        });
         await sendNotifyEmail(
           `Đã thanh toán - phí ship gộp đơn nhóm #${o.mergeGroupId}`,
           `Số tiền: ${amount.toLocaleString('vi-VN')}đ\nSĐT: ${o.phone}\nCác đơn trong nhóm: ${groupOrders.map(g => 'DH' + g.id).join(', ')}`
@@ -1505,7 +1565,7 @@ async function matchAndConfirmPayment(amount, content) {
     for (const o of candidates) {
       const phoneDigits = String(o.phone).replace(/\D/g, '');
       if (phoneDigits && norm.includes(phoneDigits) && norm.includes(String(o.id))) {
-        await ordersStore.updateOrder(o.id, { paid: true });
+        await withLock(ORDER_LOCK, () => ordersStore.updateOrder(o.id, { paid: true }));
         await sendNotifyEmail(
           `Đã thanh toán - đơn DH${o.id}`,
           `Số tiền: ${amount.toLocaleString('vi-VN')}đ\nSĐT: ${o.phone}\nKhách: ${o.customerName}`
@@ -1561,47 +1621,49 @@ app.patch('/api/orders/bulk', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Không có đơn nào để cập nhật' });
   }
   const results = { success: [], notFound: [], ambiguous: [] }; // MỚI: ambiguous = nhiều đơn cùng SĐT chưa giao, không tự gán được
-  const allOrders = await ordersStore.listOrders(); // MỚI: dùng để dò đơn theo số điện thoại khi file không có Mã đơn hàng
-  for (const u of updates) {
-    let id = (u.id !== undefined && u.id !== '') ? Number(u.id) : undefined;
-    const label = u.id ?? u.phone ?? '?';
-    const patch = {};
-    if (u.trackingCode !== undefined) patch.trackingCode = u.trackingCode;
-    if (u.status !== undefined) patch.status = u.status;
-    try {
-      // MỚI: không có Mã đơn hàng -> dò theo Số điện thoại người nhận, chỉ khớp
-      // với đơn CHƯA có mã vận đơn (đơn đã có mã rồi thì bỏ qua, tránh gán nhầm đơn cũ)
-      if (id === undefined && u.phone) {
-        const target = normalizePhone(u.phone);
-        const matches = target ? allOrders.filter(o => !o.trackingCode && normalizePhone(o.phone) === target) : [];
-        if (matches.length === 1) {
-          id = matches[0].id;
-        } else if (matches.length === 0) {
-          results.notFound.push(label);
-          continue;
-        } else {
-          results.ambiguous.push(label); // nhiều đơn chưa giao cùng SĐT này - cần vào sửa tay
-          continue;
+  await withLock(ORDER_LOCK, async () => {
+    const allOrders = await ordersStore.listOrders(); // MỚI: dùng để dò đơn theo số điện thoại khi file không có Mã đơn hàng
+    for (const u of updates) {
+      let id = (u.id !== undefined && u.id !== '') ? Number(u.id) : undefined;
+      const label = u.id ?? u.phone ?? '?';
+      const patch = {};
+      if (u.trackingCode !== undefined) patch.trackingCode = u.trackingCode;
+      if (u.status !== undefined) patch.status = u.status;
+      try {
+        // MỚI: không có Mã đơn hàng -> dò theo Số điện thoại người nhận, chỉ khớp
+        // với đơn CHƯA có mã vận đơn (đơn đã có mã rồi thì bỏ qua, tránh gán nhầm đơn cũ)
+        if (id === undefined && u.phone) {
+          const target = normalizePhone(u.phone);
+          const matches = target ? allOrders.filter(o => !o.trackingCode && normalizePhone(o.phone) === target) : [];
+          if (matches.length === 1) {
+            id = matches[0].id;
+          } else if (matches.length === 0) {
+            results.notFound.push(label);
+            continue;
+          } else {
+            results.ambiguous.push(label); // nhiều đơn chưa giao cùng SĐT này - cần vào sửa tay
+            continue;
+          }
         }
-      }
-      if (id === undefined || Number.isNaN(id)) { results.notFound.push(label); continue; }
+        if (id === undefined || Number.isNaN(id)) { results.notFound.push(label); continue; }
 
-      const before = await ordersStore.getOrderById(id); // MỚI: để biết trước đó có mã vận đơn chưa
-      const updated = await ordersStore.updateOrder(id, patch);
-      if (updated) {
-        results.success.push(id);
-        // MỚI: vừa gắn mã vận đơn (trước đó chưa có) - tự báo khách qua Gmail
-        if (u.trackingCode && before && !before.trackingCode) {
-          sendTrackingEmailToCustomer(updated).catch(() => {});
+        const before = await ordersStore.getOrderById(id); // MỚI: để biết trước đó có mã vận đơn chưa
+        const updated = await ordersStore.updateOrder(id, patch);
+        if (updated) {
+          results.success.push(id);
+          // MỚI: vừa gắn mã vận đơn (trước đó chưa có) - tự báo khách qua Gmail
+          if (u.trackingCode && before && !before.trackingCode) {
+            sendTrackingEmailToCustomer(updated).catch(() => {});
+          }
+        } else {
+          results.notFound.push(label);
         }
-      } else {
+      } catch (err) {
+        console.error(`Lỗi cập nhật đơn #${label}:`, err.message);
         results.notFound.push(label);
       }
-    } catch (err) {
-      console.error(`Lỗi cập nhật đơn #${label}:`, err.message);
-      results.notFound.push(label);
     }
-  }
+  });
   res.json(results);
 });
 
@@ -1668,30 +1730,32 @@ app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
       patch.deliveredAt = new Date().toISOString();
     }
 
-    const updated = await ordersStore.updateOrder(id, patch);
+    const updated = await withLock(ORDER_LOCK, async () => {
+      const u = await ordersStore.updateOrder(id, patch);
+      if (!u) return null;
+      // MỚI: đơn VỪA chuyển sang huỷ (trước đó chưa huỷ) - cộng trả lại tồn kho
+      if (wantsCancel && current.status !== 'huy') {
+        await adjustStock(current.items, +1);
+      }
+      // MỚI: phí ship gộp là 1 khoản CHUNG cho cả nhóm - tick "đã thu" ở đơn nào cũng
+      // cần cập nhật đồng bộ cho mọi đơn khác trong cùng nhóm gộp
+      if (mergeShippingPaid !== undefined && u.mergeGroupId) {
+        const allOrders = await ordersStore.listOrders();
+        const groupOrders = allOrders.filter(o => o.mergeGroupId === u.mergeGroupId && o.id !== id);
+        for (const go of groupOrders) {
+          await ordersStore.updateOrder(go.id, { mergeShippingPaid: Boolean(mergeShippingPaid) });
+        }
+        u.mergeShippingPaid = Boolean(mergeShippingPaid);
+        await ordersStore.updateOrder(id, { mergeShippingPaid: Boolean(mergeShippingPaid) });
+      }
+      return u;
+    });
     if (!updated) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
-
-    // MỚI: đơn VỪA chuyển sang huỷ (trước đó chưa huỷ) - cộng trả lại tồn kho
-    if (wantsCancel && current.status !== 'huy') {
-      await adjustStock(current.items, +1);
-    }
 
     // MỚI: vừa gắn mã vận đơn (trước đó chưa có) - tự báo khách qua Gmail, không
     // await để không làm chậm phản hồi cho admin
     if (trackingCode && !current.trackingCode) {
       sendTrackingEmailToCustomer(updated).catch(() => {});
-    }
-
-    // MỚI: phí ship gộp là 1 khoản CHUNG cho cả nhóm - tick "đã thu" ở đơn nào cũng
-    // cần cập nhật đồng bộ cho mọi đơn khác trong cùng nhóm gộp
-    if (mergeShippingPaid !== undefined && updated.mergeGroupId) {
-      const allOrders = await ordersStore.listOrders();
-      const groupOrders = allOrders.filter(o => o.mergeGroupId === updated.mergeGroupId && o.id !== id);
-      for (const go of groupOrders) {
-        await ordersStore.updateOrder(go.id, { mergeShippingPaid: Boolean(mergeShippingPaid) });
-      }
-      updated.mergeShippingPaid = Boolean(mergeShippingPaid);
-      await ordersStore.updateOrder(id, { mergeShippingPaid: Boolean(mergeShippingPaid) });
     }
 
     res.json(updated);
@@ -1702,8 +1766,8 @@ app.patch('/api/orders/:id', requireAdmin, async (req, res) => {
 });
 
 // MỚI: khách tự huỷ đơn của mình - chỉ khi đơn CHƯA có mã vận đơn
-app.post('/api/orders/cancel', async (req, res) => {
-  const { orderId, phone } = req.body;
+app.post('/api/orders/cancel', rateLimit('order-lookup', 20, 10 * 60 * 1000), async (req, res) => {
+  const { orderId, phone, verifyCode } = req.body; // MỚI: verifyCode
   if (!orderId || !phone) {
     return res.status(400).json({ error: 'Thiếu mã đơn hàng hoặc số điện thoại' });
   }
@@ -1713,15 +1777,26 @@ app.post('/api/orders/cancel', async (req, res) => {
     if (!order || String(order.phone).replace(/\s|-/g, '') !== normalizedPhone) {
       return res.status(404).json({ error: 'Không tìm thấy đơn hàng — kiểm tra lại mã đơn và số điện thoại' });
     }
+    // MỚI: đơn có sẵn verifyCode thì bắt buộc nhập đúng mới cho huỷ - đơn cũ (trước khi có
+    // tính năng này) chưa có verifyCode thì vẫn cho qua như cũ.
+    if (order.verifyCode) {
+      const normalizedInput = normalizeVerifyCode(verifyCode);
+      if (normalizedInput !== order.verifyCode) {
+        return res.status(403).json({ error: 'Mã xác nhận đơn hàng không đúng. Mã này đã hiện cho bạn lúc đặt hàng thành công - nếu quên, hãy nhắn shop để được hỗ trợ huỷ đơn.' });
+      }
+    }
     if (order.trackingCode) {
       return res.status(400).json({ error: 'Đơn đã có mã vận đơn (đang được xử lý giao hàng), không thể tự huỷ. Liên hệ shop để được hỗ trợ.' });
     }
     if (order.status === 'huy' || order.status === 'hoan_thanh') {
       return res.status(400).json({ error: 'Đơn này không còn ở trạng thái có thể huỷ.' });
     }
-    const updated = await ordersStore.updateOrder(Number(orderId), { status: 'huy' });
-    await adjustStock(order.items, +1); // MỚI: cộng trả lại tồn kho khi khách tự huỷ đơn
-    res.json(updated);
+    const updated = await withLock(ORDER_LOCK, async () => {
+      const u = await ordersStore.updateOrder(Number(orderId), { status: 'huy' });
+      await adjustStock(order.items, +1); // MỚI: cộng trả lại tồn kho khi khách tự huỷ đơn
+      return u;
+    });
+    res.json(stripVerifyCode(updated));
   } catch (err) {
     console.error('Lỗi khách tự huỷ đơn:', err.message);
     res.status(500).json({ error: 'Không huỷ được đơn hàng, thử lại giúp mình' });
@@ -1731,8 +1806,8 @@ app.post('/api/orders/cancel', async (req, res) => {
 // MỚI: khách tự đổi thông tin nhận hàng (tên, SĐT, địa chỉ) - chỉ khi đơn CHƯA có mã vận đơn.
 // `phone` dùng để XÁC THỰC đúng chủ đơn (khớp với SĐT hiện có trên đơn) - nếu khách muốn
 // đổi sang SĐT mới thì gửi thêm `newPhone`, tách riêng để không lẫn với SĐT xác thực.
-app.post('/api/orders/update-address', async (req, res) => {
-  const { orderId, phone, customerName, newPhone, province, ward, addressDetail } = req.body;
+app.post('/api/orders/update-address', rateLimit('order-lookup', 20, 10 * 60 * 1000), async (req, res) => {
+  const { orderId, phone, customerName, newPhone, province, ward, addressDetail, verifyCode } = req.body; // MỚI: verifyCode
   if (!orderId || !phone || !customerName || !province || !ward || !addressDetail) {
     return res.status(400).json({ error: 'Thiếu thông tin — cần đủ mã đơn, số điện thoại, tên người nhận, Tỉnh/Thành, Xã/Phường và địa chỉ chi tiết' });
   }
@@ -1741,6 +1816,13 @@ app.post('/api/orders/update-address', async (req, res) => {
     const normalizedPhone = String(phone).replace(/\s|-/g, '');
     if (!order || String(order.phone).replace(/\s|-/g, '') !== normalizedPhone) {
       return res.status(404).json({ error: 'Không tìm thấy đơn hàng — kiểm tra lại mã đơn và số điện thoại' });
+    }
+    // MỚI: bắt buộc đúng mã xác nhận mới cho đổi thông tin (đơn cũ chưa có verifyCode thì bỏ qua)
+    if (order.verifyCode) {
+      const normalizedInput = normalizeVerifyCode(verifyCode);
+      if (normalizedInput !== order.verifyCode) {
+        return res.status(403).json({ error: 'Mã xác nhận đơn hàng không đúng. Mã này đã hiện cho bạn lúc đặt hàng thành công - nếu quên, hãy nhắn shop để được hỗ trợ.' });
+      }
     }
     if (order.trackingCode) {
       return res.status(400).json({ error: 'Đơn đã có mã vận đơn (đang được xử lý giao hàng), không thể đổi thông tin. Liên hệ shop để được hỗ trợ.' });
@@ -1754,8 +1836,8 @@ app.post('/api/orders/update-address', async (req, res) => {
     if (newPhone && String(newPhone).replace(/\s|-/g, '') !== normalizedPhone) {
       patch.phone = newPhone.trim();
     }
-    const updated = await ordersStore.updateOrder(Number(orderId), patch);
-    res.json(updated);
+    const updated = await withLock(ORDER_LOCK, () => ordersStore.updateOrder(Number(orderId), patch));
+    res.json(stripVerifyCode(updated));
   } catch (err) {
     console.error('Lỗi khách tự đổi thông tin đơn hàng:', err.message);
     res.status(500).json({ error: 'Không lưu được thay đổi, thử lại giúp mình' });
@@ -1771,21 +1853,23 @@ app.post('/api/orders/bulk-cancel', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Không có đơn nào để huỷ' });
   }
   const results = { success: [], failed: [] };
-  for (const rawId of ids) {
-    const id = Number(rawId);
-    try {
-      const current = await ordersStore.getOrderById(id);
-      if (!current) { results.failed.push({ id, reason: 'Không tìm thấy đơn' }); continue; }
-      if (current.trackingCode) { results.failed.push({ id, reason: 'Đã có mã vận đơn' }); continue; }
-      if (current.status === 'huy' || current.status === 'hoan_thanh') { results.failed.push({ id, reason: 'Đã huỷ/hoàn thành' }); continue; }
-      await ordersStore.updateOrder(id, { status: 'huy' });
-      await adjustStock(current.items, +1); // cộng trả lại tồn kho, giống huỷ từng đơn
-      results.success.push(id);
-    } catch (err) {
-      console.error(`Lỗi huỷ đơn #${id}:`, err.message);
-      results.failed.push({ id, reason: 'Lỗi hệ thống' });
+  await withLock(ORDER_LOCK, async () => {
+    for (const rawId of ids) {
+      const id = Number(rawId);
+      try {
+        const current = await ordersStore.getOrderById(id);
+        if (!current) { results.failed.push({ id, reason: 'Không tìm thấy đơn' }); continue; }
+        if (current.trackingCode) { results.failed.push({ id, reason: 'Đã có mã vận đơn' }); continue; }
+        if (current.status === 'huy' || current.status === 'hoan_thanh') { results.failed.push({ id, reason: 'Đã huỷ/hoàn thành' }); continue; }
+        await ordersStore.updateOrder(id, { status: 'huy' });
+        await adjustStock(current.items, +1); // cộng trả lại tồn kho, giống huỷ từng đơn
+        results.success.push(id);
+      } catch (err) {
+        console.error(`Lỗi huỷ đơn #${id}:`, err.message);
+        results.failed.push({ id, reason: 'Lỗi hệ thống' });
+      }
     }
-  }
+  });
   res.json(results);
 });
 
@@ -1797,21 +1881,23 @@ app.post('/api/orders/bulk-delete', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Không có đơn nào để xoá' });
   }
   const results = { success: [], failed: [] };
-  for (const rawId of ids) {
-    const id = Number(rawId);
-    try {
-      // MỚI: giống xoá 1 đơn - đơn nào chưa từng huỷ thì cộng trả lại kho trước khi xoá
-      const current = await ordersStore.getOrderById(id);
-      if (current && current.status !== 'huy') {
-        await adjustStock(current.items, +1);
+  await withLock(ORDER_LOCK, async () => {
+    for (const rawId of ids) {
+      const id = Number(rawId);
+      try {
+        // MỚI: giống xoá 1 đơn - đơn nào chưa từng huỷ thì cộng trả lại kho trước khi xoá
+        const current = await ordersStore.getOrderById(id);
+        if (current && current.status !== 'huy') {
+          await adjustStock(current.items, +1);
+        }
+        const deleted = await ordersStore.deleteOrder(id);
+        if (deleted) results.success.push(id); else results.failed.push(id);
+      } catch (err) {
+        console.error(`Lỗi xoá đơn #${id}:`, err.message);
+        results.failed.push(id);
       }
-      const deleted = await ordersStore.deleteOrder(id);
-      if (deleted) results.success.push(id); else results.failed.push(id);
-    } catch (err) {
-      console.error(`Lỗi xoá đơn #${id}:`, err.message);
-      results.failed.push(id);
     }
-  }
+  });
   res.json(results);
 });
 
@@ -1819,7 +1905,15 @@ app.post('/api/orders/bulk-delete', requireAdmin, async (req, res) => {
 app.delete('/api/orders/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   try {
-    const deleted = await ordersStore.deleteOrder(id);
+    const deleted = await withLock(ORDER_LOCK, async () => {
+      // MỚI: đơn nào chưa từng huỷ thì cộng trả lại kho trước khi xoá - đồng bộ với
+      // bulk-delete, tránh xoá đơn xong tồn kho bị "kẹt" thiếu vĩnh viễn
+      const current = await ordersStore.getOrderById(id);
+      if (current && current.status !== 'huy') {
+        await adjustStock(current.items, +1);
+      }
+      return ordersStore.deleteOrder(id);
+    });
     if (!deleted) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
     res.json({ success: true });
   } catch (err) {
@@ -1843,7 +1937,7 @@ async function autoCompleteDeliveredOrders() {
       (now - new Date(o.deliveredAt).getTime()) >= DELIVERED_AUTO_COMPLETE_MS
     );
     for (const o of dueOrders) {
-      await ordersStore.updateOrder(o.id, { status: 'hoan_thanh' });
+      await withLock(ORDER_LOCK, () => ordersStore.updateOrder(o.id, { status: 'hoan_thanh' }));
       console.log(`>>> Tự động chuyển đơn #${o.id} sang "Hoàn thành" (đã giao quá 2 ngày)`);
     }
   } catch (err) {
@@ -1877,8 +1971,10 @@ async function autoCancelUnpaidOrders() {
       (now - new Date(o.createdAt).getTime()) >= unpaidAutoCancelMs
     );
     for (const o of dueOrders) {
-      await ordersStore.updateOrder(o.id, { status: 'huy' });
-      await adjustStock(o.items, +1); // nhả lại tồn kho đã trừ lúc đặt đơn
+      await withLock(ORDER_LOCK, async () => {
+        await ordersStore.updateOrder(o.id, { status: 'huy' });
+        await adjustStock(o.items, +1); // nhả lại tồn kho đã trừ lúc đặt đơn
+      });
       console.log(`>>> Tự động huỷ đơn #${o.id} (chưa thanh toán quá ${hours} giờ), đã nhả lại tồn kho`);
     }
   } catch (err) {
